@@ -25,7 +25,8 @@ class LaunchAtLogin {
             }
         } else {
             // Legacy API for macOS 12 and below
-            SMLoginItemSetEnabled("com.codetay.XKey" as CFString, enabled)
+            // Note: This should be the helper bundle ID, not the App Group
+            SMLoginItemSetEnabled("com.codetay.XKey.LaunchHelper" as CFString, enabled)
         }
     }
     

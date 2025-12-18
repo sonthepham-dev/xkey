@@ -434,8 +434,8 @@ class KeyboardEventHandler: EventTapManager.EventTapDelegate {
         }
 
         // Wait for any pending injection to complete before processing next keystroke
-        // This prevents race condition in Chrome where backspace arrives before previous character is rendered
-        injector.waitForInjectionCooldown()
+        // Uses semaphore synchronization to prevent race conditions
+        injector.waitForInjectionComplete()
         
         // Process through engine (Vietnamese mode)
         debugLogCallback?("  → Calling engine.processKey('\(character)')...")
@@ -455,37 +455,32 @@ class KeyboardEventHandler: EventTapManager.EventTapDelegate {
         if result.shouldConsume {
             debugLogCallback?("  → CONSUME: bs=\(result.backspaceCount) chars=\(result.newCharacters.count)")
 
-            // Chrome address bar fix: Check for duplicates BEFORE sending backspaces
-            // Only applies to Chrome address bar, not content area
+            // Chrome address bar fix: Check for duplicates BEFORE injection
             debugLogCallback?("  → Calling Chrome address bar fix...")
             injector.checkAndFixChromeAddressBarDuplicate(proxy: proxy)
             debugLogCallback?("  → Chrome fix done")
 
-            // Send backspaces with autocomplete fix
-            if result.backspaceCount > 0 {
-                debugLogCallback?("    → Send \(result.backspaceCount) backspaces")
-                injector.sendBackspaces(
-                    count: result.backspaceCount,
-                    codeTable: codeTable,
-                    proxy: proxy,
-                    fixAutocomplete: engine.settings.fixAutocomplete
-                )
-            }
-
-            // Send new characters
+            // Debug log
             if !result.newCharacters.isEmpty {
                 let chars = result.newCharacters.map { $0.unicode(codeTable: codeTable) }.joined()
                 debugLogCallback?("    → Inject: \(chars)")
-
-                // Debug: Log each character
                 for (index, char) in result.newCharacters.enumerated() {
                     let unicode = char.unicode(codeTable: codeTable)
                     let unicodeHex = unicode.unicodeScalars.map { String(format: "U+%04X", $0.value) }.joined(separator: ", ")
                     debugLogCallback?("      [\(index)]: '\(unicode)' (\(unicodeHex))")
                 }
-
-                injector.sendCharacters(result.newCharacters, codeTable: codeTable, proxy: proxy)
             }
+
+            // Use synchronized injection (backspace + text in one atomic operation)
+            // This prevents race conditions in terminals where next keystroke arrives
+            // between backspace and text injection
+            injector.injectSync(
+                backspaceCount: result.backspaceCount,
+                characters: result.newCharacters,
+                codeTable: codeTable,
+                proxy: proxy,
+                fixAutocomplete: engine.settings.fixAutocomplete
+            )
 
             // Consume original event
             return nil
@@ -511,22 +506,21 @@ class KeyboardEventHandler: EventTapManager.EventTapDelegate {
         debugLogCallback?("  → Backspace result: shouldConsume=\(result.shouldConsume), bs=\(result.backspaceCount), chars=\(result.newCharacters.count)")
 
         if result.shouldConsume {
-            // Send backspaces
-            if result.backspaceCount > 0 {
-                debugLogCallback?("    → Send \(result.backspaceCount) backspaces")
-                injector.sendBackspaces(count: result.backspaceCount, codeTable: codeTable, proxy: proxy)
+            debugLogCallback?("    → Inject: bs=\(result.backspaceCount), chars=\(result.newCharacters.count)")
+            
+            // Log each character being injected
+            for (index, char) in result.newCharacters.enumerated() {
+                let unicode = char.unicode(codeTable: codeTable)
+                debugLogCallback?("      [\(index)]: '\(unicode)' (U+\(String(format: "%04X", unicode.unicodeScalars.first?.value ?? 0)))")
             }
-
-            // Send new characters
-            if !result.newCharacters.isEmpty {
-                debugLogCallback?("    → Inject: \(result.newCharacters.count) chars")
-                // Log each character being injected
-                for (index, char) in result.newCharacters.enumerated() {
-                    let unicode = char.unicode(codeTable: codeTable)
-                    debugLogCallback?("      [\(index)]: '\(unicode)' (U+\(String(format: "%04X", unicode.unicodeScalars.first?.value ?? 0)))")
-                }
-                injector.sendCharacters(result.newCharacters, codeTable: codeTable, proxy: proxy)
-            }
+            
+            // Use synchronized injection
+            injector.injectSync(
+                backspaceCount: result.backspaceCount,
+                characters: result.newCharacters,
+                codeTable: codeTable,
+                proxy: proxy
+            )
 
             return nil
         }

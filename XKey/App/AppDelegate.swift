@@ -61,7 +61,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         debugWindowController?.logEvent("🚀 XKey starting...")
 
         // Load and apply preferences
-        let preferences = PreferencesManager.shared.loadPreferences()
+        let preferences = SharedSettings.shared.loadPreferences()
         
         // Initialize components
         setupKeyboardHandling()
@@ -119,7 +119,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setupDebugWindow() {
         // Check if debug mode is enabled in preferences
-        let preferences = PreferencesManager.shared.loadPreferences()
+        let preferences = SharedSettings.shared.loadPreferences()
         let shouldShowDebug = preferences.debugModeEnabled
         
         // Show debug window only if enabled in settings
@@ -448,7 +448,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func setupGlobalHotkey() {
-        let preferences = PreferencesManager.shared.loadPreferences()
+        let preferences = SharedSettings.shared.loadPreferences()
         setupGlobalHotkey(with: preferences.toggleHotkey)
     }
     

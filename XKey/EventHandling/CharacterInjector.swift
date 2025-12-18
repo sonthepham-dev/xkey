@@ -33,8 +33,10 @@ class CharacterInjector {
     private var isFirstWord: Bool = true  // Track if we're typing the first word
     private var keystrokeCount: Int = 0   // Track number of keystrokes in current word
     private var isTypingMidSentence: Bool = false  // Track if user moved cursor (typing in middle of text)
-    private var lastInjectionTime: UInt64 = 0  // Track when last character was injected (mach_absolute_time)
-    private static let injectionCooldownNs: UInt64 = 15_000_000  // 15ms cooldown between injections
+    
+    /// Semaphore to ensure injection completes before next keystroke is processed
+    /// This prevents race conditions where backspace arrives before previous injection is rendered
+    private let injectionSemaphore = DispatchSemaphore(value: 1)
     
     // Cached injection method to avoid repeated detection
     private var cachedMethod: InjectionMethod?
@@ -47,7 +49,8 @@ class CharacterInjector {
     // MARK: - Initialization
     
     init() {
-        eventSource = CGEventSource(stateID: .hidSystemState)
+        // Use .privateState to isolate injected events from system event state
+        eventSource = CGEventSource(stateID: .privateState)
     }
     
     // MARK: - Word Tracking
@@ -90,23 +93,156 @@ class CharacterInjector {
         debugCallback?("Keystroke count: \(keystrokeCount)")
     }
     
-    /// Wait for injection cooldown if needed (call BEFORE processing next keystroke)
-    /// This prevents race condition where backspace arrives before previous injection is rendered
-    func waitForInjectionCooldown() {
-        guard lastInjectionTime > 0 else { return }
+    /// Wait for previous injection to complete (call BEFORE processing next keystroke)
+    /// Uses semaphore to ensure 100% synchronization (better than cooldown timer)
+    func waitForInjectionComplete() {
+        debugCallback?("    → Waiting for previous injection to complete...")
+        injectionSemaphore.wait()
+        injectionSemaphore.signal()
+        debugCallback?("    → Previous injection complete, proceeding")
+    }
+    
+    /// Begin injection (call at start of injection)
+    private func beginInjection() {
+        injectionSemaphore.wait()
+    }
+    
+    /// End injection (call at end of injection)
+    private func endInjection() {
+        injectionSemaphore.signal()
+    }
+    
+    // MARK: - Synchronized Injection
+    
+    /// Inject text replacement synchronously - backspaces + new text in one atomic operation
+    /// This prevents race conditions where next keystroke arrives between backspace and text injection
+    func injectSync(backspaceCount: Int, characters: [VNCharacter], codeTable: CodeTable, proxy: CGEventTapProxy, fixAutocomplete: Bool = false) {
+        // Acquire semaphore for entire injection operation
+        injectionSemaphore.wait()
+        defer { injectionSemaphore.signal() }
         
-        var timebaseInfo = mach_timebase_info_data_t()
-        mach_timebase_info(&timebaseInfo)
+        let (method, delays) = detectInjectionMethod()
+        debugCallback?("injectSync: bs=\(backspaceCount), chars=\(characters.count), method=\(method)")
         
-        let currentTime = mach_absolute_time()
-        let elapsedTicks = currentTime - lastInjectionTime
-        let elapsedNs = elapsedTicks * UInt64(timebaseInfo.numer) / UInt64(timebaseInfo.denom)
+        // IMPORTANT: Disable autocomplete fix when typing in middle of sentence
+        let shouldFixAutocomplete = fixAutocomplete && !isTypingMidSentence
         
-        if elapsedNs < CharacterInjector.injectionCooldownNs {
-            let remainingNs = CharacterInjector.injectionCooldownNs - elapsedNs
-            let remainingUs = UInt32(remainingNs / 1000)
-            debugCallback?("    → Injection cooldown: waiting \(remainingUs)µs")
-            usleep(remainingUs)
+        // Step 1: Send backspaces
+        if backspaceCount > 0 {
+            switch method {
+            case .selection:
+                debugCallback?("    → Selection method: Shift+Left × \(backspaceCount)")
+                injectViaSelectionInternal(count: backspaceCount, delays: delays, proxy: proxy)
+                
+            case .autocomplete:
+                debugCallback?("    → Autocomplete method: Forward Delete + backspaces")
+                injectViaAutocompleteInternal(count: backspaceCount, delays: delays, proxy: proxy)
+                
+            case .slow, .fast:
+                debugCallback?("    → Backspace method: delays=\(delays)")
+                if shouldFixAutocomplete {
+                    sendForwardDelete(proxy: proxy)
+                    usleep(3000)
+                }
+                for i in 0..<backspaceCount {
+                    sendBackspaceKey(codeTable: codeTable, proxy: proxy)
+                    usleep(delays.backspace)
+                    debugCallback?("    → Backspace \(i + 1)/\(backspaceCount)")
+                }
+                if backspaceCount > 0 {
+                    usleep(delays.wait)
+                }
+            }
+        }
+        
+        // Step 2: Send new characters
+        if !characters.isEmpty {
+            var fullString = ""
+            for (index, character) in characters.enumerated() {
+                let unicodeString = character.unicode(codeTable: codeTable)
+                fullString += unicodeString
+                debugCallback?("  [\(index)]: '\(unicodeString)'")
+            }
+            
+            // Send text using chunking
+            sendTextChunkedInternal(fullString, delay: delays.text, proxy: proxy)
+        }
+        
+        // Settle time
+        let settleTime: UInt32 = (method == .slow) ? 20000 : 5000
+        usleep(settleTime)
+        
+        debugCallback?("injectSync: complete")
+    }
+    
+    /// Internal: Send backspace key (no semaphore)
+    private func sendBackspaceKey(codeTable: CodeTable, proxy: CGEventTapProxy) {
+        let deleteKeyCode: CGKeyCode = 0x33
+        let backspaceCount = codeTable.requiresDoubleBackspace ? 2 : 1
+        for _ in 0..<backspaceCount {
+            sendKeyPress(deleteKeyCode, proxy: proxy)
+            usleep(1000)
+        }
+    }
+    
+    /// Internal: Selection injection (no semaphore)
+    private func injectViaSelectionInternal(count: Int, delays: InjectionDelays, proxy: CGEventTapProxy) {
+        for i in 0..<count {
+            sendShiftLeftArrow(proxy: proxy)
+            usleep(delays.backspace > 0 ? delays.backspace : 1000)
+            debugCallback?("    → Shift+Left \(i + 1)/\(count)")
+        }
+        if count > 0 {
+            usleep(delays.wait > 0 ? delays.wait : 3000)
+        }
+    }
+    
+    /// Internal: Autocomplete injection (no semaphore)
+    private func injectViaAutocompleteInternal(count: Int, delays: InjectionDelays, proxy: CGEventTapProxy) {
+        sendForwardDelete(proxy: proxy)
+        usleep(3000)
+        for i in 0..<count {
+            sendKeyPress(0x33, proxy: proxy)
+            usleep(delays.backspace > 0 ? delays.backspace : 1000)
+            debugCallback?("    → Backspace \(i + 1)/\(count)")
+        }
+        if count > 0 {
+            usleep(delays.wait > 0 ? delays.wait : 5000)
+        }
+    }
+    
+    /// Internal: Send text chunked (no semaphore)
+    private func sendTextChunkedInternal(_ text: String, delay: UInt32, proxy: CGEventTapProxy) {
+        guard let source = eventSource else { return }
+        
+        let utf16 = Array(text.utf16)
+        var offset = 0
+        let chunkSize = 20
+        
+        debugCallback?("    → Sending text chunked: '\(text)' (\(utf16.count) UTF-16 units)")
+        
+        while offset < utf16.count {
+            let end = min(offset + chunkSize, utf16.count)
+            var chunk = Array(utf16[offset..<end])
+            
+            guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
+                  let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false) else {
+                break
+            }
+            
+            keyDown.keyboardSetUnicodeString(stringLength: chunk.count, unicodeString: &chunk)
+            keyUp.keyboardSetUnicodeString(stringLength: chunk.count, unicodeString: &chunk)
+            
+            keyDown.tapPostEvent(proxy)
+            keyUp.tapPostEvent(proxy)
+            
+            debugCallback?("    → Sent chunk [\(offset)..<\(end)]: \(chunk.count) chars")
+            
+            if delay > 0 && end < utf16.count {
+                usleep(delay)
+            }
+            
+            offset = end
         }
     }
     
@@ -114,8 +250,13 @@ class CharacterInjector {
 
     /// Send backspace key presses with optional autocomplete fix
     /// Uses adaptive delays based on detected app type (Terminal/JetBrains/etc.)
+    /// Synchronized with semaphore to prevent race conditions
     func sendBackspaces(count: Int, codeTable: CodeTable, proxy: CGEventTapProxy, fixAutocomplete: Bool = false) {
         guard count > 0 else { return }
+        
+        // Begin synchronized injection
+        beginInjection()
+        defer { endInjection() }
         
         // Detect injection method for current app
         let (method, delays) = detectInjectionMethod()
@@ -213,31 +354,35 @@ class CharacterInjector {
 
     
     /// Send Vietnamese characters with adaptive delays for Terminal/JetBrains
+    /// Uses text chunking (up to 20 chars per CGEvent) for better performance
+    /// Synchronized with semaphore to prevent race conditions
     func sendCharacters(_ characters: [VNCharacter], codeTable: CodeTable, proxy: CGEventTapProxy) {
         guard !characters.isEmpty else { return }
+        
+        // Begin synchronized injection
+        beginInjection()
+        defer { endInjection() }
         
         // Get injection method and delays
         let (method, delays) = detectInjectionMethod()
         
         debugCallback?("sendCharacters: count=\(characters.count), method=\(method)")
         
+        // Build full string from characters
+        var fullString = ""
         for (index, character) in characters.enumerated() {
             let unicodeString = character.unicode(codeTable: codeTable)
-            debugCallback?("  [\(index)]: Sending '\(unicodeString)' (Unicode: \(unicodeString.unicodeScalars.map { String(format: "U+%04X", $0.value) }.joined(separator: ", ")))")
-            sendString(unicodeString, proxy: proxy)
-            
-            // Add delay between characters for slow apps (Terminal/JetBrains)
-            if method == .slow && index < characters.count - 1 {
-                usleep(delays.text)
-            }
+            fullString += unicodeString
+            debugCallback?("  [\(index)]: '\(unicodeString)' (Unicode: \(unicodeString.unicodeScalars.map { String(format: "U+%04X", $0.value) }.joined(separator: ", ")))")
         }
         
-        // Settle time: longer for slow apps to ensure text is rendered
-        let settleTime: UInt32 = (method == .slow) ? 40000 : 5000  // 40ms for slow (Terminal), 5ms for fast
-        usleep(settleTime)
+        // Send text using chunking (20 chars per CGEvent - macOS limit)
+        sendTextChunked(fullString, delay: delays.text, proxy: proxy)
         
-        // Record injection time for cooldown tracking
-        lastInjectionTime = mach_absolute_time()
+        // Settle time: adaptive based on method
+        // Reduced from 20ms to 8ms for slow apps thanks to semaphore sync
+        let settleTime: UInt32 = (method == .slow) ? 8000 : 3000
+        usleep(settleTime)
     }
 
     
@@ -310,10 +455,46 @@ class CharacterInjector {
         return getTextBeforeCursor()?.count
     }
 
-    /// Send a string of characters
+    /// Send a string of characters (legacy method, sends one char at a time)
     func sendString(_ string: String, proxy: CGEventTapProxy) {
         for char in string.unicodeScalars {
             sendUnicodeCharacter(char, proxy: proxy)
+        }
+    }
+    
+    /// Send text in chunks (up to 20 chars per CGEvent) for better performance
+    /// CGEvent has a 20-character limit per keyboardSetUnicodeString call
+    private func sendTextChunked(_ text: String, delay: UInt32, proxy: CGEventTapProxy) {
+        guard let source = eventSource else { return }
+        
+        let utf16 = Array(text.utf16)
+        var offset = 0
+        let chunkSize = 20  // CGEvent limit
+        
+        debugCallback?("    → Sending text chunked: '\(text)' (\(utf16.count) UTF-16 units)")
+        
+        while offset < utf16.count {
+            let end = min(offset + chunkSize, utf16.count)
+            var chunk = Array(utf16[offset..<end])
+            
+            guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
+                  let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false) else {
+                break
+            }
+            
+            keyDown.keyboardSetUnicodeString(stringLength: chunk.count, unicodeString: &chunk)
+            keyUp.keyboardSetUnicodeString(stringLength: chunk.count, unicodeString: &chunk)
+            
+            keyDown.tapPostEvent(proxy)
+            keyUp.tapPostEvent(proxy)
+            
+            debugCallback?("    → Sent chunk [\(offset)..<\(end)]: \(chunk.count) chars")
+            
+            if delay > 0 && end < utf16.count {
+                usleep(delay)
+            }
+            
+            offset = end
         }
     }
     
@@ -769,20 +950,45 @@ class CharacterInjector {
             return (.selection, (1000, 3000, 2000))
         }
         
-        // Terminal apps - high delays for reliability (Warp, iTerm2, etc.)
-        let terminals = [
-            // Terminals
-            "com.apple.Terminal", "com.googlecode.iterm2", "io.alacritty",
-            "com.github.wez.wezterm", "com.mitchellh.ghostty", "dev.warp.Warp-Stable",
-            "net.kovidgoyal.kitty", "co.zeit.hyper", "org.tabby", "com.raphaelamorim.rio",
-            "com.termius-dmg.mac"
+        // Terminal apps - optimized delays with semaphore synchronization
+        // Different terminals have different rendering speeds
+        let fastTerminals = [
+            // Fast terminals (GPU-accelerated, modern)
+            "io.alacritty", "com.mitchellh.ghostty", "net.kovidgoyal.kitty",
+            "com.github.wez.wezterm", "com.raphaelamorim.rio"
         ]
-        if terminals.contains(bundleId) {
-            debugCallback?("    → Method: slow (Terminal)")
+        let mediumTerminals = [
+            // Medium speed terminals
+            "com.googlecode.iterm2", "dev.warp.Warp-Stable", "co.zeit.hyper",
+            "org.tabby", "com.termius-dmg.mac"
+        ]
+        let slowTerminals = [
+            // Slower terminals (Apple Terminal)
+            "com.apple.Terminal"
+        ]
+        
+        if fastTerminals.contains(bundleId) {
+            debugCallback?("    → Method: slow (Fast Terminal - GPU)")
             cachedMethod = .slow
-            // High delays for terminal reliability: 40ms backspace, 80ms wait, 50ms text
-            cachedDelays = (40000, 80000, 50000)
-            return (.slow, (40000, 80000, 50000))
+            // Fast GPU terminals: 2ms backspace, 4ms wait, 2ms text
+            cachedDelays = (2000, 4000, 2000)
+            return (.slow, (2000, 4000, 2000))
+        }
+        
+        if mediumTerminals.contains(bundleId) {
+            debugCallback?("    → Method: slow (Medium Terminal)")
+            cachedMethod = .slow
+            // Medium terminals: 3ms backspace, 6ms wait, 3ms text
+            cachedDelays = (3000, 6000, 3000)
+            return (.slow, (3000, 6000, 3000))
+        }
+        
+        if slowTerminals.contains(bundleId) {
+            debugCallback?("    → Method: slow (Slow Terminal)")
+            cachedMethod = .slow
+            // Apple Terminal: 4ms backspace, 8ms wait, 4ms text
+            cachedDelays = (4000, 8000, 4000)
+            return (.slow, (4000, 8000, 4000))
         }
         
         // Default: fast with safe delays

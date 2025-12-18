@@ -12,19 +12,20 @@ import ServiceManagement
 
 class PreferencesViewModel: ObservableObject {
     @Published var preferences: Preferences
-    
+
     init() {
-        self.preferences = PreferencesManager.shared.loadPreferences()
+        // Load from SharedSettings (App Group UserDefaults)
+        self.preferences = SharedSettings.shared.loadPreferences()
     }
-    
+
     func save() {
-        // Save preferences
-        PreferencesManager.shared.savePreferences(preferences)
-        
+        // Save to SharedSettings (App Group UserDefaults)
+        SharedSettings.shared.savePreferences(preferences)
+
         // Apply launch at login setting
         setLaunchAtLogin(preferences.startAtLogin)
     }
-    
+
     private func setLaunchAtLogin(_ enabled: Bool) {
         if #available(macOS 13.0, *) {
             do {
@@ -37,7 +38,7 @@ class PreferencesViewModel: ObservableObject {
                 print("Failed to \(enabled ? "enable" : "disable") launch at login: \(error)")
             }
         } else {
-            SMLoginItemSetEnabled("com.codetay.XKey.debug" as CFString, enabled)
+            SMLoginItemSetEnabled("group.com.codetay.inputmethod.XKey.debug" as CFString, enabled)
         }
     }
 }

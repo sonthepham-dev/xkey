@@ -21,7 +21,7 @@ class StatusBarManager: ObservableObject {
             eventTapManager: eventTapManager
         )
         // Load icon style from preferences
-        self.menuBarIconStyle = PreferencesManager.shared.loadPreferences().menuBarIconStyle
+        self.menuBarIconStyle = SharedSettings.shared.loadPreferences().menuBarIconStyle
     }
     
     private func log(_ message: String) {
@@ -100,7 +100,7 @@ class StatusBarManager: ObservableObject {
         
         // Toggle Vietnamese
         // For modifier-only hotkeys, show the hotkey in the title instead of using keyEquivalent
-        let prefs = PreferencesManager.shared.loadPreferences()
+        let prefs = SharedSettings.shared.loadPreferences()
         let isModifierOnly = prefs.toggleHotkey.isModifierOnly
         
         let toggleTitle: String
@@ -216,7 +216,7 @@ class StatusBarManager: ObservableObject {
         
         // Update toggle item
         if let toggleItem = menu.item(withTag: 1) {
-            let prefs = PreferencesManager.shared.loadPreferences()
+            let prefs = SharedSettings.shared.loadPreferences()
             let isModifierOnly = prefs.toggleHotkey.isModifierOnly
             
             let baseTitle = viewModel.isVietnameseEnabled ? "Tắt Tiếng Việt" : "Bật Tiếng Việt"

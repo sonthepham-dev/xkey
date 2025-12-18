@@ -281,6 +281,42 @@ struct AdvancedSettingsSection: View {
                             .foregroundColor(.secondary)
                     }
                 }
+                
+                // IMKit Mode (Experimental)
+                SettingsGroup(title: "Input Method Kit (Thử nghiệm)") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Toggle("Bật IMKit Mode", isOn: $viewModel.preferences.imkitEnabled)
+                            
+                            Text("Sử dụng Input Method Kit thay vì CGEvent injection. Giúp gõ mượt hơn trong Terminal và IDE.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        if viewModel.preferences.imkitEnabled {
+                            Toggle("Hiển thị gạch chân khi gõ", isOn: $viewModel.preferences.imkitUseMarkedText)
+                                .padding(.leading, 20)
+                            
+                            Divider()
+                            
+                            // Install XKeyIM button
+                            HStack {
+                                Text("XKeyIM Input Method:")
+                                    .font(.caption)
+                                Spacer()
+                                Button("Cài đặt XKeyIM...") {
+                                    IMKitHelper.installXKeyIM()
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                            }
+                            
+                            Text("Sau khi cài đặt, vào System Settings → Keyboard → Input Sources để thêm XKey Vietnamese")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding()

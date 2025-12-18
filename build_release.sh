@@ -15,7 +15,9 @@ fi
 ENABLE_CODESIGN=${ENABLE_CODESIGN:-true}  # Set to false to disable code signing
 ENABLE_NOTARIZE=${ENABLE_NOTARIZE:-false}  # Set to true to enable notarization
 ENABLE_DMG=${ENABLE_DMG:-true}  # Set to false to skip DMG creation
+ENABLE_XKEYIM=${ENABLE_XKEYIM:-true}  # Set to false to skip XKeyIM build
 BUNDLE_ID="com.codetay.XKey"
+XKEYIM_BUNDLE_ID="com.codetay.inputmethod.XKey"
 APP_NAME="XKey"
 DMG_NAME="XKey.dmg"
 DMG_VOLUME_NAME="XKey"
@@ -64,12 +66,10 @@ if [ "$ENABLE_CODESIGN" = true ]; then
       -arch x86_64 -arch arm64 \
       ONLY_ACTIVE_ARCH=NO \
       PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" \
-      CODE_SIGN_STYLE=Manual \
-      CODE_SIGN_IDENTITY="$DEVELOPER_ID" \
+      CODE_SIGN_STYLE=Automatic \
       DEVELOPMENT_TEAM="$TEAM_ID" \
       CODE_SIGNING_REQUIRED=YES \
       CODE_SIGNING_ALLOWED=YES \
-      CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO \
       OTHER_CODE_SIGN_FLAGS="--timestamp --options=runtime" \
       build
 else
@@ -109,6 +109,102 @@ echo "✅ Code signature verified"
 echo ""
 echo "📝 Signature details:"
 codesign -dvvv Release/XKey.app 2>&1 | grep -E "(Authority|Identifier|TeamIdentifier|Timestamp)"
+
+
+# ============================================
+# Build XKeyIM (Input Method Kit)
+# ============================================
+if [ "$ENABLE_XKEYIM" = true ]; then
+    echo ""
+    echo "🔨 Building XKeyIM (Input Method)..."
+    
+    # Check if XKeyIM scheme exists
+    if xcodebuild -project XKey.xcodeproj -list 2>/dev/null | grep -q "XKeyIM"; then
+        
+        if [ "$ENABLE_CODESIGN" = true ]; then
+            xcodebuild -project XKey.xcodeproj \
+              -scheme XKeyIM \
+              -configuration Release \
+              -derivedDataPath ./build \
+              -arch x86_64 -arch arm64 \
+              ONLY_ACTIVE_ARCH=NO \
+              PRODUCT_BUNDLE_IDENTIFIER="$XKEYIM_BUNDLE_ID" \
+              CODE_SIGN_STYLE=Automatic \
+              DEVELOPMENT_TEAM="$TEAM_ID" \
+              CODE_SIGNING_REQUIRED=YES \
+              CODE_SIGNING_ALLOWED=YES \
+              OTHER_CODE_SIGN_FLAGS="--timestamp --options=runtime" \
+              build
+        else
+            xcodebuild -project XKey.xcodeproj \
+              -scheme XKeyIM \
+              -configuration Release \
+              -derivedDataPath ./build \
+              -arch x86_64 -arch arm64 \
+              ONLY_ACTIVE_ARCH=NO \
+              PRODUCT_BUNDLE_IDENTIFIER="$XKEYIM_BUNDLE_ID" \
+              CODE_SIGN_STYLE=Manual \
+              CODE_SIGN_IDENTITY="-" \
+              CODE_SIGNING_REQUIRED=NO \
+              CODE_SIGNING_ALLOWED=NO \
+              CODE_SIGN_ENTITLEMENTS="XKeyIM/XKeyIMRelease.entitlements" \
+              PROVISIONING_PROFILE_SPECIFIER="" \
+              build
+        fi
+        
+        # Copy XKeyIM to Release directory
+        echo "📦 Copying XKeyIM.app to Release..."
+        rm -rf Release/XKeyIM.app
+        cp -R "./build/Build/Products/Release/XKeyIM.app" Release/
+
+        # Ensure menu icon is present
+        if [ -f "XKeyIM/MenuIcon.pdf" ]; then
+            echo "📎 Adding MenuIcon.pdf to XKeyIM..."
+            cp "XKeyIM/MenuIcon.pdf" "Release/XKeyIM.app/Contents/Resources/"
+        fi
+
+        # Update display name to "XKey"
+        echo "📝 Updating XKeyIM display name..."
+        /usr/libexec/PlistBuddy -c "Set :CFBundleName XKey" "Release/XKeyIM.app/Contents/Info.plist" 2>/dev/null || true
+        /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName XKey" "Release/XKeyIM.app/Contents/Info.plist" 2>/dev/null || true
+        
+        # Re-sign after modifying Info.plist
+        if [ "$ENABLE_CODESIGN" = true ]; then
+            echo "🔐 Re-signing XKeyIM after Info.plist update..."
+            codesign --force --deep --sign "$DEVELOPER_ID" --timestamp --options=runtime --entitlements "XKeyIM/XKeyIM.entitlements" "Release/XKeyIM.app"
+        else
+            echo "🔐 Ad-hoc signing XKeyIM with entitlements..."
+            codesign --force --deep --sign - --identifier "$XKEYIM_BUNDLE_ID" --entitlements "XKeyIM/XKeyIM.entitlements" Release/XKeyIM.app
+        fi
+        
+        # Verify signature
+        codesign -vvv --deep --strict Release/XKeyIM.app
+        echo "✅ XKeyIM built successfully"
+        
+        # Embed XKeyIM inside XKey.app for easy installation
+        echo "📦 Embedding XKeyIM.app inside XKey.app/Contents/Resources..."
+        mkdir -p "Release/XKey.app/Contents/Resources"
+        rm -rf "Release/XKey.app/Contents/Resources/XKeyIM.app"
+        cp -R "Release/XKeyIM.app" "Release/XKey.app/Contents/Resources/"
+        echo "✅ XKeyIM embedded in XKey.app"
+
+        # Re-sign XKey.app after embedding XKeyIM (IMPORTANT: embedding modifies sealed resources)
+        echo "🔐 Re-signing XKey.app after embedding XKeyIM..."
+        if [ "$ENABLE_CODESIGN" = true ]; then
+            codesign --force --deep --sign "$DEVELOPER_ID" --timestamp --options=runtime "Release/XKey.app"
+        else
+            codesign --force --deep --sign - --identifier "$BUNDLE_ID" "Release/XKey.app"
+        fi
+
+        # Verify XKey.app signature after re-signing
+        echo "🔍 Verifying XKey.app signature after embedding..."
+        codesign -vvv --deep --strict Release/XKey.app
+        echo "✅ XKey.app signature verified"
+
+    else
+        echo "⚠️  XKeyIM target not found in Xcode project, skipping..."
+    fi
+fi
 
 
 # ============================================
@@ -262,12 +358,19 @@ echo "✅ Build successful!"
 echo ""
 echo "✅ Done! Release build is ready at:"
 echo "   $(pwd)/Release/XKey.app"
+if [ "$ENABLE_XKEYIM" = true ] && [ -f "Release/XKeyIM.app" ]; then
+    echo "   $(pwd)/Release/XKeyIM.app"
+    echo "   (Also embedded in XKey.app/Contents/Resources/)"
+fi
 if [ "$ENABLE_DMG" = true ]; then
     echo "   $(pwd)/Release/$DMG_NAME"
 fi
 echo ""
 echo "📊 App size:"
 du -sh Release/XKey.app
+if [ "$ENABLE_XKEYIM" = true ] && [ -f "Release/XKeyIM.app" ]; then
+    du -sh Release/XKeyIM.app
+fi
 if [ "$ENABLE_DMG" = true ] && [ -f "Release/$DMG_NAME" ]; then
     echo ""
     echo "📀 DMG size:"
@@ -294,6 +397,7 @@ echo "💡 Usage:"
 echo "   Default (with code signing + DMG):  ./build_release.sh"
 echo "   Without code signing:               ENABLE_CODESIGN=false ./build_release.sh"
 echo "   Without DMG:                        ENABLE_DMG=false ./build_release.sh"
+echo "   Without XKeyIM:                     ENABLE_XKEYIM=false ./build_release.sh"
 echo "   With notarization:                  ENABLE_NOTARIZE=true ./build_release.sh"
 echo ""
 echo "📝 For notarization, create .env file with:"

@@ -50,7 +50,7 @@ class StatusBarViewModel: ObservableObject {
         log("🔄 Vietnamese toggled: \(isVietnameseEnabled ? "ON" : "OFF")")
         
         // Play beep sound if enabled
-        let prefs = PreferencesManager.shared.loadPreferences()
+        let prefs = SharedSettings.shared.loadPreferences()
         if prefs.beepOnToggle {
             NSSound.beep()
         }
@@ -86,12 +86,12 @@ class StatusBarViewModel: ObservableObject {
         }
         
         // Save to preferences
-        var prefs = PreferencesManager.shared.loadPreferences()
+        var prefs = SharedSettings.shared.loadPreferences()
         prefs.inputMethod = method
-        PreferencesManager.shared.savePreferences(prefs)
-        
+        SharedSettings.shared.savePreferences(prefs)
+
         // Verify saved
-        let savedPrefs = PreferencesManager.shared.loadPreferences()
+        let savedPrefs = SharedSettings.shared.loadPreferences()
         log("📋 Saved to prefs, verified: \(savedPrefs.inputMethod.displayName)")
     }
     
@@ -102,9 +102,9 @@ class StatusBarViewModel: ObservableObject {
         keyboardHandler?.codeTable = table
         
         // Save to preferences
-        var prefs = PreferencesManager.shared.loadPreferences()
+        var prefs = SharedSettings.shared.loadPreferences()
         prefs.codeTable = table
-        PreferencesManager.shared.savePreferences(prefs)
+        SharedSettings.shared.savePreferences(prefs)
         
         log("✅ CodeTable set to \(table.displayName)")
     }
@@ -126,7 +126,7 @@ class StatusBarViewModel: ObservableObject {
     }
     
     func updateHotkeyDisplay(_ hotkey: Hotkey? = nil) {
-        let hotkeyToUse = hotkey ?? PreferencesManager.shared.loadPreferences().toggleHotkey
+        let hotkeyToUse = hotkey ?? SharedSettings.shared.loadPreferences().toggleHotkey
         
         // Update display string
         hotkeyDisplay = hotkeyToUse.displayString

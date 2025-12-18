@@ -57,6 +57,10 @@ struct Preferences: Codable {
     // Debug settings
     var debugModeEnabled: Bool = false           // Show debug window (even in production)
     
+    // IMKit settings (experimental)
+    var imkitEnabled: Bool = false               // Use IMKit instead of CGEvent injection
+    var imkitUseMarkedText: Bool = false         // Show underline when composing (IMKit mode)
+    
     // UI settings
     var showDockIcon: Bool = false               // Show icon in Dock (menu bar always visible)
     var startAtLogin: Bool = false
