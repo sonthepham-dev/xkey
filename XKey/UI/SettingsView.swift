@@ -291,15 +291,26 @@ struct AdvancedSettingsSection: View {
                     VStack(alignment: .leading, spacing: 12) {
                         VStack(alignment: .leading, spacing: 4) {
                             Toggle("Bật IMKit Mode", isOn: $viewModel.preferences.imkitEnabled)
-                            
+
                             Text("Sử dụng Input Method Kit thay vì CGEvent injection. Giúp gõ mượt hơn trong Terminal và IDE.")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
-                        
+
                         if viewModel.preferences.imkitEnabled {
-                            Toggle("Hiển thị gạch chân khi gõ", isOn: $viewModel.preferences.imkitUseMarkedText)
-                                .padding(.leading, 20)
+                            Divider()
+
+                            VStack(alignment: .leading, spacing: 8) {
+                                Toggle("Hiển thị gạch chân khi gõ (Khuyến nghị)", isOn: $viewModel.preferences.imkitUseMarkedText)
+                                    .padding(.leading, 20)
+
+                                Text(viewModel.preferences.imkitUseMarkedText ?
+                                    "✓ Chuẩn IMKit - Hiển thị gạch chân khi đang gõ. Ổn định và tương thích tốt với mọi ứng dụng." :
+                                    "⚠️ Direct Mode - Không có gạch chân nhưng có thể gặp lỗi thêm dấu/double ký tự trong một số trường hợp.")
+                                    .font(.caption)
+                                    .foregroundColor(viewModel.preferences.imkitUseMarkedText ? .secondary : .orange)
+                                    .padding(.leading, 20)
+                            }
                             
                             Divider()
                             

@@ -15,6 +15,7 @@ class EventTapManager {
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var isEnabled = false
+    private var isSuspended = false  // Track suspension state for IMKit mode
 
     weak var delegate: EventTapDelegate?
     var debugLogCallback: ((String) -> Void)?
@@ -165,7 +166,23 @@ class EventTapManager {
         stop()
         try start()
     }
-    
+
+    /// Suspend event tap temporarily (for IMKit mode)
+    func suspend() {
+        guard isEnabled else { return }
+
+        isSuspended = true
+        debugLogCallback?("⏸️ Event tap suspended (IMKit active)")
+    }
+
+    /// Resume event tap (when leaving IMKit mode)
+    func resume() {
+        guard isEnabled else { return }
+
+        isSuspended = false
+        debugLogCallback?("▶️ Event tap resumed (IMKit inactive)")
+    }
+
     // MARK: - Event Callback
     
     private func eventCallback(
@@ -173,6 +190,12 @@ class EventTapManager {
         type: CGEventType,
         event: CGEvent
     ) -> Unmanaged<CGEvent>? {
+        // IMPORTANT: If suspended (IMKit mode active), pass ALL events through
+        // This allows IMKit to receive and handle keyboard events
+        if isSuspended {
+            return Unmanaged.passUnretained(event)
+        }
+
         debugLogCallback?("EventTapManager.eventCallback: type=\(type.rawValue), delegate=\(delegate != nil)")
 
         // Handle tap disabled event

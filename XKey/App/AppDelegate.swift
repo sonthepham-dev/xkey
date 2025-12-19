@@ -206,7 +206,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Check permission BEFORE trying to start event tap
         // This prevents macOS system dialog from appearing
         guard let manager = eventTapManager else { return }
-        
+
+        // Check if current input source is XKeyIM
+        // If so, don't start event tap yet (will be started when switching away)
+        if let currentSource = InputSourceManager.getCurrentInputSource(),
+           InputSourceManager.isXKeyInputSource(currentSource) {
+            debugWindowController?.logEvent("  ⏸️ Current input source is XKeyIM - event tap will NOT start")
+            debugWindowController?.logEvent("     Event tap will start automatically when switching away from XKeyIM")
+            return
+        }
+
         if manager.checkAccessibilityPermission() {
             // Permission already granted, start event tap
             do {
@@ -348,8 +357,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         setupGlobalHotkey(with: preferences.toggleHotkey)
         
         // Update undo typing (Esc key)
-        setupUndoTyping(enabled: preferences.undoTypingEnabled)
-        
+        keyboardHandler?.undoTypingEnabled = preferences.undoTypingEnabled
+        debugWindowController?.logEvent(preferences.undoTypingEnabled ? "  ✅ Undo typing enabled (Esc key)" : "  ⏹️ Undo typing disabled")
+
         debugWindowController?.logEvent("✅ Preferences applied (including advanced features)")
     }
     
@@ -468,17 +478,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         debugWindowController?.logEvent("  ✅ Toggle hotkey configured in EventTap: \(hotkey.displayString)")
-    }
-    
-    private func setupUndoTyping(enabled: Bool) {
-        if enabled {
-            // Enable undo typing with Esc key (keyCode 0x35)
-            keyboardHandler?.undoTypingKeyCode = 0x35
-            debugWindowController?.logEvent("  ✅ Undo typing enabled (Esc key)")
-        } else {
-            keyboardHandler?.undoTypingKeyCode = nil
-            debugWindowController?.logEvent("  ⏹️ Undo typing disabled")
-        }
     }
     
     private func setupReadWordHotkey() {
@@ -641,23 +640,55 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Handle input source changes - apply enable/disable logic
     private func handleInputSourceChange(source: InputSourceInfo, shouldEnable: Bool) {
-        // Get current state
-        let currentlyEnabled = self.statusBarManager?.viewModel.isVietnameseEnabled ?? false
+        // Check if this is XKeyIM input source
+        let isXKeyIM = InputSourceManager.isXKeyInputSource(source)
 
-        // Auto enable/disable Vietnamese mode based on configuration
-        if shouldEnable {
-            // Enable Vietnamese mode
-            if !currentlyEnabled {
-                self.statusBarManager?.viewModel.isVietnameseEnabled = true
-                self.keyboardHandler?.setVietnamese(true)
-                self.debugWindowController?.logEvent("✅ Input Source '\(source.displayName)' → Auto-enabled")
-            }
+        if isXKeyIM {
+            // Switched TO XKeyIM - suspend CGEvent tap to let IMKit handle events
+            debugWindowController?.logEvent("🔑 Switched to XKeyIM - suspending CGEvent tap")
+            eventTapManager?.suspend()
+
+            // Force enable Vietnamese mode for XKeyIM
+            self.statusBarManager?.viewModel.isVietnameseEnabled = true
+            self.keyboardHandler?.setVietnamese(true)
         } else {
-            // Disable Vietnamese mode
-            if currentlyEnabled {
-                self.statusBarManager?.viewModel.isVietnameseEnabled = false
-                self.keyboardHandler?.setVietnamese(false)
-                self.debugWindowController?.logEvent("⏹️ Input Source '\(source.displayName)' → Auto-disabled")
+            // Switched AWAY from XKeyIM
+            debugWindowController?.logEvent("🔄 Switched away from XKeyIM")
+
+            // Check if event tap is already running
+            // If not (e.g., started with XKeyIM active), start it now
+            guard let manager = eventTapManager else { return }
+
+            // Try to start event tap if it's not running
+            do {
+                try manager.start()
+                debugWindowController?.logEvent("  ✅ Event tap started (was not running)")
+            } catch EventTapManager.EventTapError.alreadyRunning {
+                // Already running - just resume it
+                debugWindowController?.logEvent("  ▶️ Resuming event tap")
+                manager.resume()
+            } catch {
+                debugWindowController?.logEvent("  ❌ Failed to start event tap: \(error)")
+            }
+
+            // Get current state
+            let currentlyEnabled = self.statusBarManager?.viewModel.isVietnameseEnabled ?? false
+
+            // Auto enable/disable Vietnamese mode based on configuration
+            if shouldEnable {
+                // Enable Vietnamese mode
+                if !currentlyEnabled {
+                    self.statusBarManager?.viewModel.isVietnameseEnabled = true
+                    self.keyboardHandler?.setVietnamese(true)
+                    self.debugWindowController?.logEvent("✅ Input Source '\(source.displayName)' → Auto-enabled")
+                }
+            } else {
+                // Disable Vietnamese mode
+                if currentlyEnabled {
+                    self.statusBarManager?.viewModel.isVietnameseEnabled = false
+                    self.keyboardHandler?.setVietnamese(false)
+                    self.debugWindowController?.logEvent("⏹️ Input Source '\(source.displayName)' → Auto-disabled")
+                }
             }
         }
     }

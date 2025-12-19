@@ -27,14 +27,37 @@ class DebugViewModel: ObservableObject {
         // Create log file in user's home directory
         let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
         logFileURL = homeDirectory.appendingPathComponent("XKey_Debug.log")
-        
+
         // Initialize log file with timestamp
         let timestamp = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .medium)
         let header = "=== XKey Debug Log ===\nStarted: \(timestamp)\nLog file: \(logFileURL.path)\n\n"
         try? header.write(to: logFileURL, atomically: true, encoding: .utf8)
-        
+
         logMessage("Debug window initialized")
         logMessage("Log file location: \(logFileURL.path)")
+
+        // Listen for debug logs from XKeyIM
+        setupIMKitDebugListener()
+    }
+
+    private func setupIMKitDebugListener() {
+        DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name("XKey.debugLog"),
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let userInfo = notification.userInfo,
+                  let message = userInfo["message"] as? String,
+                  let source = userInfo["source"] as? String else {
+                return
+            }
+
+            self?.logEvent("[\(source)] \(message)")
+        }
+    }
+
+    deinit {
+        DistributedNotificationCenter.default().removeObserver(self)
     }
     
     func updateStatus(_ status: String) {

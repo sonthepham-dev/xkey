@@ -97,9 +97,9 @@ class KeyboardEventHandler: EventTapManager.EventTapDelegate {
     
     // Excluded apps
     @Published var excludedApps: [ExcludedApp] = []
-    
-    // Undo typing key (single key, no modifiers)
-    var undoTypingKeyCode: UInt16?
+
+    // Undo typing with Esc key
+    @Published var undoTypingEnabled: Bool = false
     
     // Managers
     private let macroManager = MacroManager()
@@ -343,10 +343,44 @@ class KeyboardEventHandler: EventTapManager.EventTapDelegate {
             return event
         }
 
-        // Handle Escape key
+        // Handle Escape key - undo typing if enabled
         if keyCode == 0x35 { // Escape
             debugLogCallback?("KEY: [ESC] code=\(keyCode)")
-            return event  // Pass through
+
+            // Only handle undo if setting is enabled
+            if undoTypingEnabled {
+                // Check if undo is available
+                if engine.canUndoTyping() {
+                    debugLogCallback?("  → ESC - can undo, performing undo")
+                    let result = engine.undoTyping()
+
+                    if result.shouldConsume {
+                        debugLogCallback?("  → ESC - undo successful, bs=\(result.backspaceCount), chars=\(result.newCharacters.count)")
+
+                        // Use synchronized injection to replace Vietnamese text with raw keystrokes
+                        injector.injectSync(
+                            backspaceCount: result.backspaceCount,
+                            characters: result.newCharacters,
+                            codeTable: codeTable,
+                            proxy: proxy,
+                            fixAutocomplete: false
+                        )
+
+                        // Mark new session after undo
+                        injector.markNewSession()
+
+                        debugLogCallback?("  → ESC - undo completed, consuming event")
+                        return nil  // Consume the event
+                    }
+                } else {
+                    debugLogCallback?("  → ESC - no undo available")
+                }
+            } else {
+                debugLogCallback?("  → ESC - undo not enabled")
+            }
+
+            // Pass through if undo not enabled or nothing to undo
+            return event
         }
 
         // Handle Forward Delete (Fn+Delete)
@@ -355,39 +389,6 @@ class KeyboardEventHandler: EventTapManager.EventTapDelegate {
             engine.reset()
             injector.markNewSession()
             return event  // Pass through
-        }
-        
-        // Handle undo typing key (single key, no modifiers)
-        // Only trigger if there's something to undo in the engine buffer
-        if let undoKeyCode = undoTypingKeyCode, keyCode == undoKeyCode {
-            // Check if NO modifiers are pressed (pure single key)
-            let hasNoModifiers = !event.isCommandPressed && !event.isControlPressed && !event.isOptionPressed
-            
-            if hasNoModifiers && engine.canUndoTyping() {
-                debugLogCallback?("  → UNDO TYPING KEY - performing undo")
-                let result = engine.undoTyping()
-                
-                if result.shouldConsume {
-                    // Send backspaces
-                    if result.backspaceCount > 0 {
-                        injector.sendBackspaces(
-                            count: result.backspaceCount,
-                            codeTable: codeTable,
-                            proxy: proxy,
-                            fixAutocomplete: false
-                        )
-                    }
-                    
-                    // Send original characters
-                    if !result.newCharacters.isEmpty {
-                        injector.sendCharacters(result.newCharacters, codeTable: codeTable, proxy: proxy)
-                    }
-                    
-                    injector.markNewSession()
-                    return nil  // Consume the event
-                }
-            }
-            // If nothing to undo, fall through to normal processing
         }
 
         // IMPORTANT: Convert physical keyCode to QWERTY character

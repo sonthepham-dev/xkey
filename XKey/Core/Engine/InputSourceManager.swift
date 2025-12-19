@@ -109,8 +109,15 @@ class InputSourceManager {
 
         currentInputSource = newSource
 
-        // Check if XKey should be enabled for this input source
-        let shouldEnable = config.isXKeyEnabled(for: newSource.id)
+        // For XKey/OpenKey itself - always enable Vietnamese
+        let shouldEnable: Bool
+        if Self.isXKeyInputSource(newSource) {
+            shouldEnable = true
+            debugLogCallback?("🔑 Switched to XKey input source - forcing Vietnamese enabled")
+        } else {
+            // Check if XKey should be enabled for this input source
+            shouldEnable = config.isXKeyEnabled(for: newSource.id)
+        }
 
         debugLogCallback?("🔄 Input source changed: \(newSource.displayName)")
         debugLogCallback?("   ID: \(newSource.id)")
@@ -210,7 +217,8 @@ class InputSourceManager {
         // Remove duplicates and sort
         let uniqueSources = Array(Set(sources)).sorted { $0.displayName < $1.displayName }
 
-        return uniqueSources
+        // Filter out XKey/OpenKey itself from the list
+        return uniqueSources.filter { !isXKeyInputSource($0) }
     }
 
     /// Extract InputSourceInfo from TISInputSource
@@ -228,6 +236,18 @@ class InputSourceManager {
         }
 
         return InputSourceInfo(id: id, name: name)
+    }
+
+    /// Check if an input source is XKey/OpenKey itself
+    static func isXKeyInputSource(_ source: InputSourceInfo) -> Bool {
+        let lowercaseID = source.id.lowercased()
+        let lowercaseName = source.name.lowercased()
+
+        let patterns = ["xkey"]
+
+        return patterns.contains { pattern in
+            lowercaseID.contains(pattern) || lowercaseName.contains(pattern)
+        }
     }
 
     /// Check if an input source is a Vietnamese input method (heuristic)

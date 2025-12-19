@@ -21,7 +21,13 @@ class XKeyIMController: IMKInputController {
     
     /// Current composing text
     private var composingText: String = ""
-    
+
+    /// Current word length in document (for direct insertion mode)
+    private var currentWordLength: Int = 0
+
+    /// Start location of marked text (for marked text mode)
+    private var markedTextStartLocation: Int = NSNotFound
+
     /// Settings from shared App Group
     private var settings: XKeyIMSettings!
     
@@ -35,6 +41,11 @@ class XKeyIMController: IMKInputController {
 
         // Initialize engine
         engine = VNEngine()
+
+        // Set up engine logging callback
+        engine.logCallback = { message in
+            IMKitDebugger.shared.log(message, category: "VNEngine")
+        }
 
         // Load settings
         settings = XKeyIMSettings()
@@ -88,19 +99,45 @@ class XKeyIMController: IMKInputController {
         guard let event = event, event.type == .keyDown else {
             return false
         }
-        
+
         guard let client = sender as? IMKTextInput else {
             return false
         }
-        
+
         // Get character info
         guard let characters = event.characters,
               let character = characters.first else {
             return false
         }
-        
+
         let keyCode = UInt16(event.keyCode)
-        let isUppercase = character.isUppercase
+
+        // Detect uppercase correctly: check modifier flags
+        // We need to check the actual modifiers, not rely on character case
+        // because macOS might or might not apply CapsLock to the character
+        let hasCapsLock = event.modifierFlags.contains(.capsLock)
+        let hasShift = event.modifierFlags.contains(.shift)
+
+        // Get the base character (without modifiers) to check if it's a letter
+        let baseChar = event.charactersIgnoringModifiers?.first ?? character
+        let isLetter = baseChar.isLetter
+
+        // Determine uppercase state:
+        // - If CapsLock is ON and Shift is OFF → uppercase
+        // - If CapsLock is OFF and Shift is ON → uppercase
+        // - If both ON or both OFF → lowercase
+        // But only for letters - non-letters follow the character as-is
+        let isUppercase: Bool
+        if isLetter {
+            // For letters: CapsLock XOR Shift = uppercase
+            isUppercase = hasCapsLock != hasShift
+        } else {
+            // For non-letters: use character's actual case
+            isUppercase = character.isUppercase
+        }
+
+        // DEBUG: Log all key events
+        IMKitDebugger.shared.log("handle() keyCode=\(keyCode) char='\(character)' base='\(baseChar)' caps=\(hasCapsLock) shift=\(hasShift) upper=\(isUppercase) composing='\(composingText)'", category: "EVENT")
         
         // Handle modifier keys
         if event.modifierFlags.contains(.command) {
@@ -112,22 +149,90 @@ class XKeyIMController: IMKInputController {
         // Handle special keys
         switch event.keyCode {
         case 0x33: // Backspace
-            return handleBackspace(client: client)
-            
+            IMKitDebugger.shared.log("BACKSPACE - calling handleBackspace()", category: "BACKSPACE")
+            let result = handleBackspace(client: client)
+            IMKitDebugger.shared.log("BACKSPACE - handleBackspace returned \(result)", category: "BACKSPACE")
+            return result
+
         case 0x24, 0x4C: // Return, Enter
             commitComposition(client)
             engine.reset()
+            currentWordLength = 0
+            markedTextStartLocation = NSNotFound
             return false
-            
+
         case 0x30: // Tab
             commitComposition(client)
             engine.reset()
+            currentWordLength = 0
+            markedTextStartLocation = NSNotFound
             return false
-            
+
+        case 0x7C: // Arrow Right
+            // Commit composition like spacebar - accept the current word
+            if !composingText.isEmpty {
+                commitComposition(client)
+                engine.reset()
+                currentWordLength = 0
+                markedTextStartLocation = NSNotFound
+            }
+            return false // Let arrow key pass through for cursor movement
+
+        case 0x7B: // Arrow Left
+            // Also commit composition to prevent losing the typed word
+            if !composingText.isEmpty {
+                commitComposition(client)
+                engine.reset()
+                currentWordLength = 0
+                markedTextStartLocation = NSNotFound
+            }
+            return false // Let arrow key pass through for cursor movement
+
         case 0x35: // Escape
-            cancelComposition(client)
-            return true
-            
+            IMKitDebugger.shared.log("ESC - canUndo=\(engine.canUndoTyping()) composing='\(composingText)'", category: "ESC")
+            // Check if we can undo Vietnamese typing
+            if engine.canUndoTyping() && !composingText.isEmpty {
+                let result = engine.undoTyping()
+
+                // Get undone text (raw keystrokes) from result.newCharacters
+                // DO NOT use getCurrentWord() because engine was already reset in undoTyping()
+                let undoneText = result.newCharacters.map {
+                    $0.unicode(codeTable: settings.codeTable)
+                }.joined()
+                IMKitDebugger.shared.log("ESC - undone text: '\(undoneText)' (from \(result.newCharacters.count) chars)", category: "ESC")
+
+                if settings.useMarkedText && !undoneText.isEmpty {
+                    // Clear current marked text and insert raw keystrokes
+                    // This shows "tieesng" instead of "tiếng"
+                    client.setMarkedText(
+                        "",
+                        selectionRange: NSRange(location: 0, length: 0),
+                        replacementRange: client.markedRange()
+                    )
+                    client.insertText(
+                        undoneText,
+                        replacementRange: NSRange(location: NSNotFound, length: 0)
+                    )
+                } else {
+                    handleResult(result, client: client)
+                }
+
+                // Reset state after undo
+                composingText = ""
+                currentWordLength = 0
+                markedTextStartLocation = NSNotFound
+
+                IMKitDebugger.shared.log("ESC - undo completed, returning true", category: "ESC")
+                return true
+            } else {
+                // No undo available - cancel composition
+                IMKitDebugger.shared.log("ESC - no undo, canceling composition", category: "ESC")
+                cancelComposition(client)
+                currentWordLength = 0
+                markedTextStartLocation = NSNotFound
+                return true
+            }
+
         case 0x31: // Space
             // Process space as word break
             let result = engine.processWordBreak(character: " ")
@@ -136,59 +241,107 @@ class XKeyIMController: IMKInputController {
             }
             commitComposition(client)
             engine.reset()
+            currentWordLength = 0
+            markedTextStartLocation = NSNotFound
             return false // Let space pass through
             
         default:
             break
         }
-        
-        // Skip non-printable characters
-        guard character.isLetter || character.isNumber || character.isPunctuation else {
+
+        // Check if this is a printable character
+        // Use baseChar to check letter status (important for CapsLock)
+        let isPrintable = baseChar.isLetter || character.isNumber || character.isPunctuation
+
+        if !isPrintable {
+            // Non-printable - let it pass through
             return false
         }
-        
+
+        // If it's punctuation or number, commit current composition first
+        if !baseChar.isLetter {
+            if !composingText.isEmpty {
+                commitComposition(client)
+                engine.reset()
+                currentWordLength = 0
+                markedTextStartLocation = NSNotFound
+            }
+            return false // Let punctuation/number pass through
+        }
+
         // Check if Vietnamese is enabled
         guard isVietnameseEnabled else {
             return false
         }
-        
-        // Process through Vietnamese engine
+
+        // Process through Vietnamese engine (for letters only)
+        // Pass the original character so engine can detect tone marks correctly
+        // The isUppercase flag tells engine when to apply capitalization
+        IMKitDebugger.shared.log("BEFORE engine.processKey: char='\(character)' keyCode=0x\(String(keyCode, radix: 16)) isUpper=\(isUppercase)", category: "ENGINE")
         let result = engine.processKey(
             character: character,
             keyCode: keyCode,
             isUppercase: isUppercase
         )
-        
-        if result.shouldConsume {
-            handleResult(result, client: client)
-            return true
+        IMKitDebugger.shared.log("AFTER engine.processKey: shouldConsume=\(result.shouldConsume) bs=\(result.backspaceCount) newChars=\(result.newCharacters.count)", category: "ENGINE")
+
+        // IMKit marked text mode requires ALWAYS consuming Vietnamese-eligible characters
+        // This is different from Accessibility mode where we only consume when processing
+        if settings.useMarkedText {
+            if result.shouldConsume {
+                // Engine processed the key
+                handleResult(result, client: client)
+                return true
+            } else if character.isLetter {
+                // Engine didn't consume, but in marked text mode we need to mark ALL letters
+                // so future modifications (like "u" + "w" → "ư") work correctly
+
+                // Get current word from engine to include this character
+                let currentWord = engine.getCurrentWord()
+                if !currentWord.isEmpty {
+                    // Engine has buffered text - show it as marked
+                    setMarkedText(currentWord, client: client)
+                    return true
+                } else {
+                    // Engine has no buffer - just mark the single character
+                    setMarkedText(String(character), client: client)
+                    return true
+                }
+            }
+        } else {
+            // Direct insertion mode - only consume when engine says so
+            if result.shouldConsume {
+                handleResult(result, client: client)
+                return true
+            }
         }
-        
+
         return false
     }
     
     /// Handle engine result
     private func handleResult(_ result: VNEngine.ProcessResult, client: IMKTextInput) {
-        // Build new text
-        let newText = result.newCharacters.map {
-            $0.unicode(codeTable: settings.codeTable)
-        }.joined()
-        
         if settings.useMarkedText {
-            // Use marked text (with underline)
-            setMarkedText(newText, client: client)
+            // Option 1: Marked text mode - RECOMMENDED
+            // IMPORTANT: Use getCurrentWord() to get FULL word, not just delta
+            // result.newCharacters only contains changed characters (e.g., "ư")
+            // but we need the entire word (e.g., "thư")
+            let fullWord = engine.getCurrentWord()
+            IMKitDebugger.shared.log("handleResult: fullWord='\(fullWord)' (from getCurrentWord)", category: "RESULT")
+            setMarkedText(fullWord, client: client)
         } else {
-            // Direct replacement (no underline) - PREFERRED
-            replaceText(
-                newText: newText,
-                deleteCount: result.backspaceCount,
-                client: client
-            )
+            // Option 2: Direct replacement mode
+            // Use delta (newCharacters) with backspace count
+            let newText = result.newCharacters.map {
+                $0.unicode(codeTable: settings.codeTable)
+            }.joined()
+            replaceTextDirect(newText: newText, client: client)
         }
     }
     
-    /// Replace text atomically (no flickering)
-    private func replaceText(newText: String, deleteCount: Int, client: IMKTextInput) {
+    /// Replace text directly without marked text (Option 2)
+    /// This method tracks the current word length and replaces it atomically
+    private func replaceTextDirect(newText: String, client: IMKTextInput) {
         // IMPORTANT: Clear any existing marked text first to prevent underline
         // When useMarkedText is false, we should not have any marked text showing
         if !composingText.isEmpty {
@@ -197,59 +350,143 @@ class XKeyIMController: IMKInputController {
                 selectionRange: NSRange(location: 0, length: 0),
                 replacementRange: NSRange(location: NSNotFound, length: 0)
             )
+            composingText = ""
         }
 
         let selectedRange = client.selectedRange()
 
-        if deleteCount > 0 && selectedRange.location >= deleteCount {
-            // Calculate replacement range
+        // Replace the current word we've been building
+        if currentWordLength > 0 && selectedRange.location >= currentWordLength {
+            // Calculate replacement range based on tracked word length
             let replaceRange = NSRange(
-                location: selectedRange.location - deleteCount,
-                length: deleteCount
+                location: selectedRange.location - currentWordLength,
+                length: currentWordLength
             )
 
-            // Atomic replacement - insert as committed text (no underline)
+            // Atomic replacement - delete old word and insert new word
             client.insertText(newText, replacementRange: replaceRange)
         } else {
-            // Just insert as committed text (no underline)
+            // First character - just insert
             client.insertText(
                 newText,
                 replacementRange: NSRange(location: NSNotFound, length: 0)
             )
         }
 
-        // Reset composingText since text is now committed (not composing)
-        composingText = ""
+        // Update tracked length for next character
+        // Use UTF-16 count because NSRange uses UTF-16 code units
+        currentWordLength = newText.utf16.count
     }
     
-    /// Set marked text (with underline)
+    /// Set marked text (with underline) - Option 1
+    /// This is the standard IMKit way - marked text replaces itself automatically
     private func setMarkedText(_ text: String, client: IMKTextInput) {
-        composingText = text
-        
+        let previousComposingLength = composingText.utf16.count
+
+        // Track start location of marked text
+        if markedTextStartLocation == NSNotFound {
+            // First character - save start location
+            let selectedRange = client.selectedRange()
+            markedTextStartLocation = selectedRange.location
+        }
+
+        // Build replacement range based on tracked start location and previous length
+        let replacementRange: NSRange
+        if previousComposingLength > 0 {
+            // Replace existing marked text: use tracked start location and previous length
+            replacementRange = NSRange(
+                location: markedTextStartLocation,
+                length: previousComposingLength
+            )
+        } else {
+            // First character - insert at current position
+            replacementRange = NSRange(location: NSNotFound, length: 0)
+        }
+
+        // Create attributed string with underline-only style (no background)
+        // This avoids the "highlighted" appearance and shows only underline like JOkey
+        let attributes: [NSAttributedString.Key: Any] = [
+            .underlineStyle: NSUnderlineStyle.single.rawValue,
+            .underlineColor: NSColor.secondaryLabelColor
+            // IMPORTANT: No backgroundColor - this prevents highlighting/bôi đen
+            // IMPORTANT: No .markedClauseSegment - let the system use mark(forStyle:at:)
+        ]
+        let attributedText = NSAttributedString(string: text, attributes: attributes)
+
+        // Set marked text - this will mark the ENTIRE new text with underline only
         client.setMarkedText(
-            text,
+            attributedText,
             selectionRange: NSRange(location: text.count, length: 0),
-            replacementRange: NSRange(location: NSNotFound, length: 0)
+            replacementRange: replacementRange
         )
+
+        composingText = text
     }
     
     /// Handle backspace
     private func handleBackspace(client: IMKTextInput) -> Bool {
+        IMKitDebugger.shared.log("handleBackspace() - useMarkedText=\(settings.useMarkedText) composing='\(composingText)'", category: "BACKSPACE")
+
+        // For marked text mode, we need to handle backspace specially
+        // to delete character-by-character instead of deleting entire marked text
+        if settings.useMarkedText && !composingText.isEmpty {
+            // Process backspace in engine
+            _ = engine.processBackspace()
+
+            // Get the updated word from engine
+            let currentWord = engine.getCurrentWord()
+            IMKitDebugger.shared.log("handleBackspace() - currentWord after delete: '\(currentWord)'", category: "BACKSPACE")
+
+            if currentWord.isEmpty {
+                // All text deleted - clear marked text and reset
+                IMKitDebugger.shared.log("handleBackspace() - clearing all marked text", category: "BACKSPACE")
+                client.setMarkedText(
+                    "",
+                    selectionRange: NSRange(location: 0, length: 0),
+                    replacementRange: client.markedRange()
+                )
+                composingText = ""
+                markedTextStartLocation = NSNotFound
+                engine.reset()
+            } else {
+                // Still have text - update marked text with new word
+                IMKitDebugger.shared.log("handleBackspace() - updating marked text to '\(currentWord)'", category: "BACKSPACE")
+                setMarkedText(currentWord, client: client)
+            }
+
+            IMKitDebugger.shared.log("handleBackspace() - returning true (consumed)", category: "BACKSPACE")
+            return true
+        }
+
+        // Direct mode or no marked text
         let result = engine.processBackspace()
-        
+
         if result.shouldConsume {
             handleResult(result, client: client)
             return true
         }
-        
-        // If engine doesn't handle, let it pass through
+
+        // If engine doesn't handle, reset tracking and let it pass through
+        if settings.useMarkedText && !composingText.isEmpty {
+            // Clear any remaining marked text
+            client.setMarkedText(
+                "",
+                selectionRange: NSRange(location: 0, length: 0),
+                replacementRange: NSRange(location: NSNotFound, length: 0)
+            )
+            composingText = ""
+        }
+
+        currentWordLength = 0
+        markedTextStartLocation = NSNotFound
+        engine.reset()
         return false
     }
     
     /// Commit current composition
     override func commitComposition(_ sender: Any!) {
         guard let client = sender as? IMKTextInput else { return }
-        
+
         if !composingText.isEmpty {
             // If using marked text, commit it
             if settings.useMarkedText {
@@ -260,9 +497,11 @@ class XKeyIMController: IMKInputController {
             }
             composingText = ""
         }
+
+        markedTextStartLocation = NSNotFound
     }
     
-    /// Cancel composition
+    /// Cancel composition (private helper)
     private func cancelComposition(_ client: IMKTextInput) {
         if settings.useMarkedText && !composingText.isEmpty {
             // Clear marked text
@@ -273,7 +512,16 @@ class XKeyIMController: IMKInputController {
             )
         }
         composingText = ""
+        currentWordLength = 0
+        markedTextStartLocation = NSNotFound
         engine.reset()
+    }
+
+    /// Cancel composition (IMKit override - no client parameter)
+    /// This might be called by IMKit when Esc is pressed
+    override func cancelComposition() {
+        IMKitDebugger.shared.log("cancelComposition() called - composing='\(composingText)' - DOING NOTHING", category: "CANCEL")
+        // Do nothing - we handle Esc in handle(_:client:) instead
     }
     
     /// Called when input method is activated
@@ -282,6 +530,8 @@ class XKeyIMController: IMKInputController {
         reloadSettings()
         engine.reset()
         composingText = ""
+        currentWordLength = 0
+        markedTextStartLocation = NSNotFound
         NSLog("XKeyIMController: Activated")
     }
     
@@ -296,7 +546,68 @@ class XKeyIMController: IMKInputController {
     override func candidates(_ sender: Any!) -> [Any]! {
         return nil
     }
-    
+
+    /// Handle commands (like delete, move cursor, etc.)
+    /// This is called by IMKit for certain keyboard shortcuts and commands
+    override func didCommand(by aSelector: Selector!, client sender: Any!) -> Bool {
+        IMKitDebugger.shared.log("didCommand(\(String(describing: aSelector))) - composing='\(composingText)'", category: "COMMAND")
+
+        // Prevent IMKit from handling deleteBackward: (which deletes entire marked text)
+        // We handle backspace in handle(_:client:) instead
+        if aSelector == #selector(deleteBackward(_:)) {
+            IMKitDebugger.shared.log("didCommand(deleteBackward:) - returning true to CONSUME", category: "COMMAND")
+            return true  // Consume - we already handled in handle()
+        }
+
+        // Let other commands pass through
+        IMKitDebugger.shared.log("didCommand(\(String(describing: aSelector))) - returning false (pass through)", category: "COMMAND")
+        return false
+    }
+
+    @objc func deleteBackward(_ sender: Any?) {
+        // This should not be called because we return true in didCommand
+        IMKitDebugger.shared.log("deleteBackward(_:) called - THIS SHOULD NOT HAPPEN!", category: "ERROR")
+    }
+
+    /// Override to provide composition attributes (font, color, etc.)
+    /// This is called by the system to get base attributes for marked text
+    override func compositionAttributes(at range: NSRange) -> NSMutableDictionary {
+        let attributes = NSMutableDictionary()
+
+        // Set font to match system default
+        if let font = NSFont.systemFont(ofSize: 0) as NSFont? {
+            attributes[NSAttributedString.Key.font] = font
+        }
+
+        // Set text color
+        attributes[NSAttributedString.Key.foregroundColor] = NSColor.textColor
+
+        return attributes
+    }
+
+    /// Override to control marking style for different composition states
+    /// This ensures underline-only appearance (no background highlight)
+    override func mark(forStyle style: Int, at range: NSRange) -> [AnyHashable: Any]! {
+        // Get base composition attributes (as NSMutableDictionary from superclass)
+        let baseAttributes = compositionAttributes(at: range)
+        var attributes: [AnyHashable: Any] = baseAttributes as? [AnyHashable: Any] ?? [:]
+
+        // Add underline style - always use single underline (thin line)
+        // kTSMHiliteConvertedText = 0: normal converted text (what we use)
+        // kTSMHiliteSelectedRawText = 1: selected raw text
+        // kTSMHiliteSelectedConvertedText = 2: selected converted text
+        attributes[NSAttributedString.Key.underlineStyle] = NSUnderlineStyle.single.rawValue
+        attributes[NSAttributedString.Key.underlineColor] = NSColor.textColor
+
+        // Add the clause segment marker
+        attributes[NSAttributedString.Key.markedClauseSegment] = NSNumber(value: style)
+
+        // IMPORTANT: No backgroundColor - this prevents the "highlighted/bôi đen" appearance
+        // This is the key difference between JOkey's underline-only and the default behavior
+
+        return attributes
+    }
+
     // MARK: - Menu
     
     /// Input method menu
@@ -330,6 +641,8 @@ class XKeyIMController: IMKInputController {
         isVietnameseEnabled.toggle()
         engine.reset()
         composingText = ""
+        currentWordLength = 0
+        markedTextStartLocation = NSNotFound
         NSLog("XKeyIMController: Vietnamese = \(isVietnameseEnabled)")
     }
     
@@ -358,7 +671,7 @@ class XKeyIMSettings {
     var quickTelexEnabled: Bool = true
     var freeMarkEnabled: Bool = false
     var restoreIfWrongSpelling: Bool = true
-    var useMarkedText: Bool = false
+    var useMarkedText: Bool = true  // Default to true - standard IMKit behavior
     
     init() {
         // Try App Group first - must match the App Group in entitlements
@@ -368,20 +681,27 @@ class XKeyIMSettings {
     
     func reload() {
         guard let defaults = defaults else { return }
-        
+
         if let method = InputMethod(rawValue: defaults.integer(forKey: "XKey.inputMethod")) {
             inputMethod = method
         }
-        
+
         if let table = CodeTable(rawValue: defaults.integer(forKey: "XKey.codeTable")) {
             codeTable = table
         }
-        
+
         modernStyle = defaults.bool(forKey: "XKey.modernStyle")
         spellCheckEnabled = defaults.bool(forKey: "XKey.spellCheckEnabled")
         quickTelexEnabled = defaults.bool(forKey: "XKey.quickTelexEnabled")
         freeMarkEnabled = defaults.bool(forKey: "XKey.freeMarkEnabled")
         restoreIfWrongSpelling = defaults.bool(forKey: "XKey.restoreIfWrongSpelling")
-        useMarkedText = defaults.bool(forKey: "XKey.imkitUseMarkedText")
+
+        // Use marked text by default (standard IMKit behavior)
+        // Only if explicitly set to false in settings, use direct insertion mode
+        if defaults.object(forKey: "XKey.imkitUseMarkedText") != nil {
+            useMarkedText = defaults.bool(forKey: "XKey.imkitUseMarkedText")
+        } else {
+            useMarkedText = true  // Default
+        }
     }
 }

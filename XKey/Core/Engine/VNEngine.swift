@@ -2262,18 +2262,29 @@ class VNEngine {
     func getCurrentWord() -> String {
         var result = ""
         for i in 0..<Int(index) {
-            let charCode = getCharacterCode(typingWord[i])
+            let data = typingWord[i]
+            let charCode = getCharacterCode(data)
+            let isCaps = (data & VNEngine.CAPS_MASK) != 0
+
             if (charCode & VNEngine.CHAR_CODE_MASK) != 0 {
                 // Unicode character
                 let unicodeValue = charCode & 0xFFFF
                 if let scalar = UnicodeScalar(unicodeValue) {
-                    result.append(Character(scalar))
+                    var char = String(Character(scalar))
+                    if isCaps {
+                        char = char.uppercased()
+                    }
+                    result.append(char)
                 }
             } else {
                 // Key code - convert to character using macOS key code mapping
                 let keyCode = UInt16(charCode & VNEngine.CHAR_MASK)
                 if let char = keyCodeToCharacter(keyCode) {
-                    result.append(char)
+                    if isCaps {
+                        result.append(Character(String(char).uppercased()))
+                    } else {
+                        result.append(char)
+                    }
                 }
             }
         }
