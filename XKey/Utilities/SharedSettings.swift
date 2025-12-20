@@ -83,11 +83,14 @@ class SharedSettings {
     
     /// Local UserDefaults (fallback)
     private let localDefaults = UserDefaults.standard
-    
+
     /// Whether App Group is available
     var isAppGroupAvailable: Bool {
         return sharedDefaults != nil
     }
+
+    /// Flag to prevent notification spam during batch updates
+    private var isBatchUpdating: Bool = false
     
     // MARK: - Initialization
 
@@ -105,6 +108,14 @@ class SharedSettings {
     /// Register default values for settings
     private func registerDefaults() {
         let defaultValues: [String: Any] = [
+            SharedSettingsKey.inputMethod.rawValue: InputMethod.telex.rawValue,
+            SharedSettingsKey.codeTable.rawValue: CodeTable.unicode.rawValue,
+            SharedSettingsKey.modernStyle.rawValue: false,
+            SharedSettingsKey.spellCheckEnabled.rawValue: false,
+            SharedSettingsKey.quickTelexEnabled.rawValue: true,
+            SharedSettingsKey.restoreIfWrongSpelling.rawValue: true,
+            SharedSettingsKey.freeMarkEnabled.rawValue: false,
+            SharedSettingsKey.imkitUseMarkedText.rawValue: false,
             SharedSettingsKey.fixAutocomplete.rawValue: true
         ]
 
@@ -220,6 +231,11 @@ class SharedSettings {
         get { defaults.integer(forKey: SharedSettingsKey.inputMethod.rawValue) }
         set {
             defaults.set(newValue, forKey: SharedSettingsKey.inputMethod.rawValue)
+
+            // CRITICAL: Also write directly to plist file to bypass cfprefsd caching
+            // This ensures XKeyIM will read the latest value
+            writeDirectlyToPlist(key: SharedSettingsKey.inputMethod.rawValue, value: newValue)
+
             notifySettingsChanged()
         }
     }
@@ -439,10 +455,14 @@ class SharedSettings {
     func synchronize() {
         // Save to primary storage (App Group or local)
         defaults.synchronize()
-        
-        // Force flush using CFPreferences for cross-process sync
-        // This is more aggressive than UserDefaults.synchronize() alone
-        CFPreferencesAppSynchronize(kXKeyAppGroup as CFString)
+
+        // CRITICAL: Force flush using CFPreferences for cross-process sync
+        // Use CFPreferencesSynchronize with full parameters for maximum reliability
+        CFPreferencesSynchronize(
+            kXKeyAppGroup as CFString,
+            kCFPreferencesCurrentUser,
+            kCFPreferencesAnyHost
+        )
 
         // CRITICAL: Also backup to UserDefaults.standard as failsafe
         // This ensures settings persist even if App Group container changes
@@ -467,24 +487,32 @@ class SharedSettings {
     /// Write directly to plist file to bypass cfprefsd caching
     /// This is needed because cfprefsd doesn't always flush to disk in time for XKeyIM to read
     private func writeDirectlyToPlist(key: String, value: Any) {
+        // Skip if in batch mode - we'll write everything at once later
+        guard !isBatchUpdating else { return }
+
+        writeDirectlyToPlistInternal(key: key, value: value)
+    }
+
+    /// Internal plist write function (bypasses batch check)
+    private func writeDirectlyToPlistInternal(key: String, value: Any) {
         // Get the plist file path in App Group container
         guard let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: kXKeyAppGroup) else {
             logWarning("Cannot get App Group container URL", source: "SharedSettings")
             return
         }
-        
+
         let prefsURL = containerURL.appendingPathComponent("Library/Preferences/\(kXKeyAppGroup).plist")
-        
+
         // Read existing plist or create new one
         var plistDict: [String: Any] = [:]
         if let data = try? Data(contentsOf: prefsURL),
            let dict = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] {
             plistDict = dict
         }
-        
+
         // Update the value
         plistDict[key] = value
-        
+
         // Write back to file
         do {
             let data = try PropertyListSerialization.data(fromPropertyList: plistDict, format: .binary, options: 0)
@@ -497,16 +525,29 @@ class SharedSettings {
 
     /// Notify that settings have changed (for observers)
     private func notifySettingsChanged() {
+        // Skip notification if we're in batch update mode
+        // This prevents notification spam when saving multiple settings at once
+        guard !isBatchUpdating else { return }
+
         // IMPORTANT: Synchronize BEFORE notifying!
         // This ensures XKeyIM receives the latest values when it reloads
         defaults.synchronize()
-        
+
+        // CRITICAL: Force CFPreferences to flush to disk immediately
+        // This prevents XKeyIM from reading stale cached values
+        // Use CFPreferencesSynchronize with full parameters for maximum reliability
+        CFPreferencesSynchronize(
+            kXKeyAppGroup as CFString,
+            kCFPreferencesCurrentUser,
+            kCFPreferencesAnyHost
+        )
+
         // Post notification for local observers
         NotificationCenter.default.post(
             name: .sharedSettingsDidChange,
             object: nil
         )
-        
+
         // Post distributed notification for cross-app communication
         DistributedNotificationCenter.default().post(
             name: .xkeySettingsDidChange,
@@ -599,6 +640,13 @@ class SharedSettings {
 
     /// Save a Preferences object to shared settings
     func savePreferences(_ prefs: Preferences) {
+        // Enable batch mode to prevent notification spam
+        isBatchUpdating = true
+        defer {
+            // Always disable batch mode when done, even if error occurs
+            isBatchUpdating = false
+        }
+
         // Hotkey settings
         toggleHotkeyCode = prefs.toggleHotkey.keyCode
         toggleHotkeyModifiers = prefs.toggleHotkey.modifiers.rawValue
@@ -661,7 +709,16 @@ class SharedSettings {
             setExcludedApps(data)
         }
 
-        synchronize()
+        // Batch update is done - disable batch mode and write critical values to plist
+        isBatchUpdating = false
+
+        // CRITICAL: Write important values directly to plist to ensure XKeyIM reads them
+        // These are the values that XKeyIM reads directly from plist file
+        writeDirectlyToPlistInternal(key: SharedSettingsKey.inputMethod.rawValue, value: prefs.inputMethod.rawValue)
+        writeDirectlyToPlistInternal(key: SharedSettingsKey.imkitUseMarkedText.rawValue, value: prefs.imkitUseMarkedText)
+
+        // Now send ONE notification
+        notifySettingsChanged()
     }
 }
 

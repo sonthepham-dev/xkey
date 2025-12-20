@@ -546,10 +546,25 @@ if [ "$ENABLE_SPARKLE_SIGN" = true ] && [ "$ENABLE_DMG" = true ] && [ -f "Releas
     
     # Sign DMG with EdDSA signature
     echo "🔏 Signing DMG with EdDSA key..."
-    SPARKLE_SIGNATURE=$("$SPARKLE_BIN/sign_update" "Release/$DMG_NAME" --ed-key-file <(echo "$SPARKLE_PRIVATE_KEY") 2>&1 | grep -v "^$")
+    SPARKLE_OUTPUT=$("$SPARKLE_BIN/sign_update" "Release/$DMG_NAME" --ed-key-file <(echo "$SPARKLE_PRIVATE_KEY") 2>&1)
+    
+    # Extract signature from output
+    # The output might be in different formats:
+    # 1. Just the signature: "ud+UXzlYN4y7cIgbyOYZB3Nq1zjCgV0g0p+Xg7LGpcri9+HO+FEHhBPKPNWzPzDjXevVv5vZ0Sfv4372TOdDBA=="
+    # 2. XML attribute format: sparkle:edSignature="ud+UXzlYN4y7cIgbyOYZB3Nq1zjCgV0g0p+Xg7LGpcri9+HO+FEHhBPKPNWzPzDjXevVv5vZ0Sfv4372TOdDBA==" length="8298463"
+    
+    # Try to extract from XML attribute format first
+    if echo "$SPARKLE_OUTPUT" | grep -q 'sparkle:edSignature='; then
+        SPARKLE_SIGNATURE=$(echo "$SPARKLE_OUTPUT" | grep 'sparkle:edSignature=' | sed -E 's/.*sparkle:edSignature="([^"]+)".*/\1/' | tail -1)
+    else
+        # Fallback: assume it's just the signature (old format)
+        SPARKLE_SIGNATURE=$(echo "$SPARKLE_OUTPUT" | grep -v "^$" | tail -1)
+    fi
     
     if [ -z "$SPARKLE_SIGNATURE" ]; then
         echo "❌ Error: Failed to generate Sparkle signature"
+        echo "   Output from sign_update:"
+        echo "$SPARKLE_OUTPUT"
         exit 1
     fi
     

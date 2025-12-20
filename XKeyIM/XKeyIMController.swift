@@ -30,9 +30,12 @@ class XKeyIMController: IMKInputController {
 
     /// Settings from shared App Group
     private var settings: XKeyIMSettings!
-    
+
     /// Whether currently in Vietnamese mode
     private var isVietnameseEnabled: Bool = true
+
+    /// Last settings reload time (for debouncing)
+    private var lastReloadTime: Date = .distantPast
     
     // MARK: - Initialization
     
@@ -68,7 +71,16 @@ class XKeyIMController: IMKInputController {
 
     /// Handle settings changed notification from XKey app
     @objc private func handleSettingsChanged(_ notification: Notification) {
-        IMKitDebugger.shared.log("Received XKey.settingsDidChange notification - reloading...", category: "NOTIFY")
+        // Debounce: ignore if we just reloaded within last 0.5 seconds
+        // This prevents spam when multiple notifications are sent in quick succession
+        let now = Date()
+        guard now.timeIntervalSince(lastReloadTime) > 0.5 else {
+            // Silently skip - no need to log spam
+            return
+        }
+
+        lastReloadTime = now
+        // Log once per instance - settings reload will log specific changes
         reloadSettings()
     }
     
@@ -290,23 +302,37 @@ class XKeyIMController: IMKInputController {
             return false
         }
 
-        // If it's punctuation or number, commit current composition first
-        if !baseChar.isLetter {
+        // Check if Vietnamese is enabled
+        guard isVietnameseEnabled else {
+            return false
+        }
+
+        // Determine if this character should be processed by Vietnamese engine
+        let shouldProcessVietnamese: Bool
+        if baseChar.isLetter {
+            // Always process letters
+            shouldProcessVietnamese = true
+        } else if character.isNumber {
+            // Process numbers ONLY if in VNI mode (which uses 0-9 for tone marks)
+            // For other input methods (Telex, Simple Telex), numbers are just numbers
+            shouldProcessVietnamese = (settings.inputMethod == .vni)
+        } else {
+            // Punctuation - commit current composition and let it pass through
+            shouldProcessVietnamese = false
+        }
+
+        // If not processing Vietnamese, commit composition and let it pass through
+        if !shouldProcessVietnamese {
             if !composingText.isEmpty {
                 commitComposition(client)
                 engine.reset()
                 currentWordLength = 0
                 markedTextStartLocation = NSNotFound
             }
-            return false // Let punctuation/number pass through
-        }
-
-        // Check if Vietnamese is enabled
-        guard isVietnameseEnabled else {
             return false
         }
 
-        // Process through Vietnamese engine (for letters only)
+        // Process through Vietnamese engine
         // Pass the original character so engine can detect tone marks correctly
         // The isUppercase flag tells engine when to apply capitalization
         IMKitDebugger.shared.log("BEFORE engine.processKey: char='\(character)' keyCode=0x\(String(keyCode, radix: 16)) isUpper=\(isUppercase)", category: "ENGINE")
@@ -759,12 +785,30 @@ class XKeyIMSettings {
             IMKitDebugger.shared.log("reload() - defaults is nil! App Group may not be configured", category: "SETTINGS")
             return
         }
-        
+
         // Force synchronize to get latest values from disk
         defaults.synchronize()
 
-        if let method = InputMethod(rawValue: defaults.integer(forKey: "XKey.inputMethod")) {
-            inputMethod = method
+        // CRITICAL: Read inputMethod directly from plist to bypass cfprefsd cache
+        // Similar to useMarkedText logic - try plist first, then UserDefaults, then default
+        let inputMethodFromPlist = readIntFromPlist(key: "XKey.inputMethod")
+        let inputMethodValue = inputMethodFromPlist ?? defaults.integer(forKey: "XKey.inputMethod")
+
+        if let method = InputMethod(rawValue: inputMethodValue) {
+            let oldMethod = inputMethod
+
+            // Only log if value ACTUALLY changed (not just reload with same value)
+            if oldMethod != method {
+                inputMethod = method
+                let source = inputMethodFromPlist != nil ? "plist file" : "UserDefaults"
+                IMKitDebugger.shared.log("reload() - inputMethod CHANGED: \(oldMethod.displayName) → \(method.displayName) (rawValue: \(inputMethodValue), from \(source))", category: "SETTINGS")
+            } else {
+                // Value unchanged - still update in case of initialization
+                inputMethod = method
+            }
+        } else {
+            // Keep the initialized default value
+            IMKitDebugger.shared.log("reload() - inputMethod not found, using default: \(inputMethod.displayName)", category: "SETTINGS")
         }
 
         if let table = CodeTable(rawValue: defaults.integer(forKey: "XKey.codeTable")) {
@@ -779,32 +823,50 @@ class XKeyIMSettings {
 
         // CRITICAL: Read imkitUseMarkedText directly from plist file to bypass cfprefsd cache
         // cfprefsd caches aggressively and may not reflect the latest value from XKey app
+        let oldUseMarkedText = useMarkedText
         useMarkedText = readMarkedTextFromPlist() ?? true
-        IMKitDebugger.shared.log("reload() - useMarkedText = \(useMarkedText) (from plist file)", category: "SETTINGS")
+
+        // Only log if value changed
+        if oldUseMarkedText != useMarkedText {
+            IMKitDebugger.shared.log("reload() - useMarkedText CHANGED: \(oldUseMarkedText) → \(useMarkedText) (from plist file)", category: "SETTINGS")
+        }
     }
     
+    /// Read integer value directly from plist file to bypass cfprefsd cache
+    private func readIntFromPlist(key: String) -> Int? {
+        guard let dict = readPlistDict() else { return nil }
+        return dict[key] as? Int
+    }
+
     /// Read imkitUseMarkedText directly from plist file to bypass cfprefsd cache
     private func readMarkedTextFromPlist() -> Bool? {
-        let appGroup = "group.com.codetay.inputmethod.XKey"
-        guard let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup) else {
-            IMKitDebugger.shared.log("readMarkedTextFromPlist() - Cannot get App Group container URL", category: "SETTINGS")
-            return nil
-        }
-        
-        let prefsURL = containerURL.appendingPathComponent("Library/Preferences/\(appGroup).plist")
-        
-        guard let data = try? Data(contentsOf: prefsURL),
-              let dict = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else {
-            IMKitDebugger.shared.log("readMarkedTextFromPlist() - Cannot read plist file", category: "SETTINGS")
-            return nil
-        }
-        
+        guard let dict = readPlistDict() else { return nil }
+
         if let value = dict["XKey.imkitUseMarkedText"] as? Bool {
             return value
         } else if let value = dict["XKey.imkitUseMarkedText"] as? Int {
             return value != 0
         }
-        
+
         return nil
+    }
+
+    /// Read plist dictionary directly from file to bypass cfprefsd cache
+    private func readPlistDict() -> [String: Any]? {
+        let appGroup = "group.com.codetay.inputmethod.XKey"
+        guard let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup) else {
+            IMKitDebugger.shared.log("readPlistDict() - Cannot get App Group container URL", category: "SETTINGS")
+            return nil
+        }
+
+        let prefsURL = containerURL.appendingPathComponent("Library/Preferences/\(appGroup).plist")
+
+        guard let data = try? Data(contentsOf: prefsURL),
+              let dict = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else {
+            IMKitDebugger.shared.log("readPlistDict() - Cannot read plist file at \(prefsURL.path)", category: "SETTINGS")
+            return nil
+        }
+
+        return dict
     }
 }

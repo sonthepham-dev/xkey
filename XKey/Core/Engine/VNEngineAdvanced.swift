@@ -100,8 +100,8 @@ extension VNEngine {
                 
                 // Set hook state to send backspaces and new characters
                 hookState.code = UInt8(vWillProcess)
-                hookState.backspaceCount = UInt8(index)
-                hookState.newCharCount = UInt8(index)
+                hookState.backspaceCount = Int(index)
+                hookState.newCharCount = Int(index)
                 
                 for i in 0..<Int(index) {
                     hookState.charData[Int(index) - 1 - i] = getCharacterCode(typingWord[i])
@@ -176,8 +176,8 @@ extension VNEngine {
         
         // Update hook state to send the change
         hookState.code = UInt8(vWillProcess)
-        hookState.backspaceCount = UInt8(index)
-        hookState.newCharCount = UInt8(index)
+        hookState.backspaceCount = Int(index)
+        hookState.newCharCount = Int(index)
         
         for i in 0..<Int(index) {
             hookState.charData[Int(index) - 1 - i] = getCharacterCode(typingWord[i])
@@ -204,8 +204,8 @@ extension VNEngine {
         
         // Calculate backspaces needed
         hookState.code = UInt8(handleCode)
-        hookState.backspaceCount = UInt8(index)
-        hookState.newCharCount = UInt8(originalWord.count)
+        hookState.backspaceCount = Int(index)
+        hookState.newCharCount = originalWord.count
         
         // Set original characters to send
         for i in 0..<originalWord.count {

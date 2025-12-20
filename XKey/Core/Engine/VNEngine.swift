@@ -85,8 +85,8 @@ class VNEngine {
     
     struct HookState {
         var code: UInt8 = 0           // 0: DoNothing, 1: Process, 2: WordBreak, 3: Restore, 4: ReplaceMacro
-        var backspaceCount: UInt8 = 0
-        var newCharCount: UInt8 = 0
+        var backspaceCount: Int = 0   // Changed from UInt8 to Int to support longer macros
+        var newCharCount: Int = 0     // Changed from UInt8 to Int to support longer macros
         var extCode: UInt8 = 0        // 1: WordBreak, 2: Delete, 3: Normal, 4: ShouldNotSendEmpty
         var charData = [UInt32](repeating: 0, count: MAX_BUFF)
         var macroKey = [UInt32]()
@@ -468,7 +468,7 @@ class VNEngine {
                         hookState.macroKey.removeLast()
                     }
                 }
-                let startIdx = Int(index) - Int(hookState.backspaceCount)
+                let startIdx = Int(index) - hookState.backspaceCount
                 for i in startIdx..<(Int(hookState.newCharCount) + startIdx) {
                     if i >= 0 && i < typingWord.count {
                         hookState.macroKey.append(typingWord[i])
@@ -487,7 +487,7 @@ class VNEngine {
         
         // Handle bracket keys
         if isBracketKey(keyCode: keyCode) && (isBracketKey(hookState.charData[0]) || vInputType == 2 || vInputType == 3) {
-            if Int(index) - (hookState.code == UInt8(vWillProcess) ? Int(hookState.backspaceCount) : 0) > 0 {
+            if Int(index) - (hookState.code == UInt8(vWillProcess) ? hookState.backspaceCount : 0) > 0 {
                 index -= 1
                 saveWord()
             }
@@ -1075,7 +1075,7 @@ class VNEngine {
                         typingWord[markSourceIndex] &= ~VNEngine.MARK_MASK  // Remove mark from source
                         typingWord[i] |= markToMove  // Add mark to destination (ê/ô)
                         // Need to update backspace count to include the source vowel
-                        hookState.backspaceCount = UInt8(Int(index) - markSourceIndex)
+                        hookState.backspaceCount = Int(index) - markSourceIndex
                     }
                     
                     hookState.charData[Int(index) - 1 - i] = getCharacterCode(typingWord[i])
@@ -1090,7 +1090,7 @@ class VNEngine {
         // If mark was moved, we need to regenerate charData for all affected vowels
         if shouldMoveMark && markSourceIndex >= 0 {
             let startIdx = markSourceIndex
-            hookState.backspaceCount = UInt8(Int(index) - startIdx)
+            hookState.backspaceCount = Int(index) - startIdx
             for i in startIdx..<Int(index) {
                 hookState.charData[Int(index) - 1 - i] = getCharacterCode(typingWord[i])
             }
@@ -1111,7 +1111,7 @@ class VNEngine {
         }
         
         if vowelCount > 1 {
-            hookState.backspaceCount = UInt8(Int(index) - vowelStartIndex)
+            hookState.backspaceCount = Int(index) - vowelStartIndex
             hookState.newCharCount = hookState.backspaceCount
             
             let v1HasToneW = (typingWord[vowelStartIndex] & VNEngine.TONEW_MASK) != 0
@@ -1570,7 +1570,7 @@ class VNEngine {
                 hookState.charData[Int(index) - 1 - i] = getCharacterCode(typingWord[i])
             }
             hookState.newCharCount = hookState.backspaceCount
-            hookState.backspaceCount = UInt8(Int(hookState.backspaceCount) + deltaBackSpace)
+            hookState.backspaceCount = hookState.backspaceCount + deltaBackSpace
             hookState.extCode = 4
         }
     }
@@ -1627,7 +1627,7 @@ class VNEngine {
                 hookState.charData[Int(index) - 1 - i] = getCharacterCode(typingWord[i])
             }
             hookState.newCharCount = hookState.backspaceCount
-            hookState.backspaceCount = UInt8(Int(hookState.backspaceCount) + deltaBackSpace)
+            hookState.backspaceCount = hookState.backspaceCount + deltaBackSpace
             hookState.extCode = 4
         }
     }
@@ -1680,7 +1680,7 @@ class VNEngine {
         // Detect mark position
         if vowelCount == 1 {
             vowelWillSetMark = vowelEndIndex
-            hookState.backspaceCount = UInt8(Int(index) - vowelEndIndex)
+            hookState.backspaceCount = Int(index) - vowelEndIndex
             logCallback?("  Single vowel: vowelWillSetMark=\(vowelWillSetMark)")
         } else {
             if vUseModernOrthography == 0 {
@@ -1720,7 +1720,7 @@ class VNEngine {
             // IMPORTANT: Set backspaceCount correctly for restore case
             // This matches OpenKey behavior where backspaceCount is set from handleModernMark/handleOldMark
             // but we need to ensure it matches the actual charData we're sending
-            hookState.backspaceCount = UInt8(Int(index) - vowelStartIndex)
+            hookState.backspaceCount = Int(index) - vowelStartIndex
             tempDisableKey = true
         } else {
             // Remove other mark
@@ -1741,7 +1741,7 @@ class VNEngine {
                 kkVar -= 1
             }
             
-            hookState.backspaceCount = UInt8(Int(index) - vowelStartIndex)
+            hookState.backspaceCount = Int(index) - vowelStartIndex
         }
         hookState.newCharCount = hookState.backspaceCount
         logCallback?("  Result: backspaceCount=\(hookState.backspaceCount), newCharCount=\(hookState.newCharCount)")
@@ -1752,7 +1752,7 @@ class VNEngine {
     private func handleModernMark() {
         // Default
         vowelWillSetMark = vowelEndIndex
-        hookState.backspaceCount = UInt8(Int(index) - vowelEndIndex)
+        hookState.backspaceCount = Int(index) - vowelEndIndex
         
         // Rule 2: Special 3-vowel combinations
         if vowelCount == 3 {
@@ -1765,7 +1765,7 @@ class VNEngine {
                (v1 == VietnameseData.KEY_O && v2 == VietnameseData.KEY_E && v3 == VietnameseData.KEY_O) ||
                (v1 == VietnameseData.KEY_U && v2 == VietnameseData.KEY_Y && v3 == VietnameseData.KEY_A) {
                 vowelWillSetMark = vowelStartIndex + 1
-                hookState.backspaceCount = UInt8(Int(index) - vowelWillSetMark)
+                hookState.backspaceCount = Int(index) - vowelWillSetMark
             }
         } else if vowelCount == 2 {
             let v1 = chr(vowelStartIndex)
@@ -1776,12 +1776,12 @@ class VNEngine {
                (v1 == VietnameseData.KEY_A && v2 == VietnameseData.KEY_I) ||
                (v1 == VietnameseData.KEY_U && v2 == VietnameseData.KEY_I) {
                 vowelWillSetMark = vowelStartIndex
-                hookState.backspaceCount = UInt8(Int(index) - vowelWillSetMark)
+                hookState.backspaceCount = Int(index) - vowelWillSetMark
             }
             // ay -> mark on 'a'
             else if v1 == VietnameseData.KEY_A && v2 == VietnameseData.KEY_Y {
                 vowelWillSetMark = vowelStartIndex
-                hookState.backspaceCount = UInt8(Int(index) - vowelWillSetMark)
+                hookState.backspaceCount = Int(index) - vowelWillSetMark
             }
             // NOTE: "oa", "oe" cases are handled by the general rule below:
             // "If 1st vowel is 'o' or 'u' -> mark on last vowel"
@@ -1790,22 +1790,22 @@ class VNEngine {
             // uo -> mark on 'o'
             else if v1 == VietnameseData.KEY_U && v2 == VietnameseData.KEY_O {
                 vowelWillSetMark = vowelStartIndex + 1
-                hookState.backspaceCount = UInt8(Int(index) - vowelWillSetMark)
+                hookState.backspaceCount = Int(index) - vowelWillSetMark
             }
             // uy -> mark on 'y' (modern orthography: tuý, quý, thuý)
             else if v1 == VietnameseData.KEY_U && v2 == VietnameseData.KEY_Y {
                 vowelWillSetMark = vowelStartIndex + 1  // Đặt dấu vào 'y' cho kiểu hiện đại
-                hookState.backspaceCount = UInt8(Int(index) - vowelWillSetMark)
+                hookState.backspaceCount = Int(index) - vowelWillSetMark
             }
             // If 2nd vowel is 'o' or 'u' -> mark on 1st vowel
             else if v2 == VietnameseData.KEY_O || v2 == VietnameseData.KEY_U {
                 vowelWillSetMark = vowelEndIndex - 1
-                hookState.backspaceCount = UInt8(Int(index) - vowelWillSetMark + 1)
+                hookState.backspaceCount = Int(index) - vowelWillSetMark + 1
             }
             // If 1st vowel is 'o' or 'u' -> mark on last vowel
             else if v1 == VietnameseData.KEY_O || v1 == VietnameseData.KEY_U {
                 vowelWillSetMark = vowelEndIndex
-                hookState.backspaceCount = UInt8(Int(index) - vowelEndIndex)
+                hookState.backspaceCount = Int(index) - vowelEndIndex
             }
         }
         
@@ -1844,17 +1844,17 @@ class VNEngine {
                    nextKey == VietnameseData.KEY_O || nextKey == VietnameseData.KEY_U ||
                    nextKey == VietnameseData.KEY_I || nextKey == VietnameseData.KEY_C {
                     vowelWillSetMark = vowelStartIndex + 1
-                    hookState.backspaceCount = UInt8(Int(index) - vowelWillSetMark)
+                    hookState.backspaceCount = Int(index) - vowelWillSetMark
                     logCallback?("    Rule 3.1 applied: mark on 2nd vowel (index \(vowelWillSetMark))")
                 } else {
                     vowelWillSetMark = vowelStartIndex
-                    hookState.backspaceCount = UInt8(Int(index) - vowelWillSetMark)
+                    hookState.backspaceCount = Int(index) - vowelWillSetMark
                     logCallback?("    Rule 3.1 applied: mark on 1st vowel (index \(vowelWillSetMark))")
                 }
             } else {
                 // No character after the vowel pair, mark on 1st vowel
                 vowelWillSetMark = vowelStartIndex
-                hookState.backspaceCount = UInt8(Int(index) - vowelWillSetMark)
+                hookState.backspaceCount = Int(index) - vowelWillSetMark
                 logCallback?("    Rule 3.1 applied: no char after, mark on 1st vowel (index \(vowelWillSetMark))")
             }
         }
@@ -1864,7 +1864,7 @@ class VNEngine {
                 (rule3v1 == VietnameseData.KEY_U && chr(vowelStartIndex + 1) == VietnameseData.KEY_A) ||
                 (rule3v1 == VietnameseData.KEY_U && rule3v2Data == (UInt32(VietnameseData.KEY_U) | VNEngine.TONEW_MASK)) {
             vowelWillSetMark = vowelStartIndex
-            hookState.backspaceCount = UInt8(Int(index) - vowelWillSetMark)
+            hookState.backspaceCount = Int(index) - vowelWillSetMark
         }
         
         // Rule 4: Special cases for 2 vowels
@@ -1877,10 +1877,10 @@ class VNEngine {
                 // Check if there's 'g' before 'i'
                 if vowelStartIndex > 0 && chr(vowelStartIndex - 1) == VietnameseData.KEY_G {
                     vowelWillSetMark = vowelStartIndex + 1
-                    hookState.backspaceCount = UInt8(Int(index) - vowelWillSetMark)
+                    hookState.backspaceCount = Int(index) - vowelWillSetMark
                 } else {
                     vowelWillSetMark = vowelStartIndex
-                    hookState.backspaceCount = UInt8(Int(index) - vowelWillSetMark)
+                    hookState.backspaceCount = Int(index) - vowelWillSetMark
                 }
             }
             // ua
@@ -1893,17 +1893,17 @@ class VNEngine {
                 if !hasQ {
                     if vowelEndIndex + 1 >= Int(index) || !canHasEndConsonant() {
                         vowelWillSetMark = vowelStartIndex
-                        hookState.backspaceCount = UInt8(Int(index) - vowelWillSetMark)
+                        hookState.backspaceCount = Int(index) - vowelWillSetMark
                     }
                 } else {
                     vowelWillSetMark = vowelStartIndex + 1
-                    hookState.backspaceCount = UInt8(Int(index) - vowelWillSetMark)
+                    hookState.backspaceCount = Int(index) - vowelWillSetMark
                 }
             }
             // oo -> mark on last vowel
             else if v1 == VietnameseData.KEY_O && v2 == VietnameseData.KEY_O {
                 vowelWillSetMark = vowelEndIndex
-                hookState.backspaceCount = UInt8(Int(index) - vowelEndIndex)
+                hookState.backspaceCount = Int(index) - vowelEndIndex
             }
         }
         
@@ -1917,13 +1917,13 @@ class VNEngine {
         } else {
             vowelWillSetMark = vowelStartIndex
         }
-        hookState.backspaceCount = UInt8(Int(index) - vowelWillSetMark)
+        hookState.backspaceCount = Int(index) - vowelWillSetMark
         
         // Rule 2: 3 vowels or has ending consonant
         // For old style: "hòa" (no ending) vs "hoàn" (has ending 'n')
         if vowelCount == 3 || (vowelEndIndex + 1 < Int(index) && vietnameseData.isConsonant(chr(vowelEndIndex + 1)) && canHasEndConsonant()) {
             vowelWillSetMark = vowelStartIndex + 1
-            hookState.backspaceCount = UInt8(Int(index) - vowelWillSetMark)
+            hookState.backspaceCount = Int(index) - vowelWillSetMark
         }
         
         // Rule for "uy" in old style: mark on 'u' (úy)
@@ -1938,7 +1938,7 @@ class VNEngine {
 
             if v1 == VietnameseData.KEY_U && v2 == VietnameseData.KEY_Y && !hasEndConsonant {
                 vowelWillSetMark = vowelStartIndex  // Đặt dấu vào 'u' cho kiểu cũ (chỉ khi KHÔNG có phụ âm cuối)
-                hookState.backspaceCount = UInt8(Int(index) - vowelWillSetMark)
+                hookState.backspaceCount = Int(index) - vowelWillSetMark
             }
         }
         
@@ -1960,7 +1960,7 @@ class VNEngine {
             if (key == VietnameseData.KEY_E && hasTone) ||   // ê
                (key == VietnameseData.KEY_O && hasToneW) {   // ơ
                 vowelWillSetMark = i
-                hookState.backspaceCount = UInt8(Int(index) - vowelWillSetMark)
+                hookState.backspaceCount = Int(index) - vowelWillSetMark
                 break
             }
         }
@@ -2727,16 +2727,25 @@ extension VNEngine {
                                hookState.code == UInt8(vRestore) ||
                                hookState.code == UInt8(vReplaceMacro)
         
-        result.backspaceCount = Int(hookState.backspaceCount)
-        
-        // Convert character data to VNCharacter array
-        // IMPORTANT: In OpenKey, charData is stored in reverse order (last character at index 0)
-        // So we need to read it in reverse order to get the correct sequence
-        // This matches OpenKey's SendNewCharString which reads from newCharCount-1 down to 0
-        for i in stride(from: Int(hookState.newCharCount) - 1, through: 0, by: -1) {
-            let charData = hookState.charData[i]
-            let vnChar = convertToVNCharacter(charData)
-            result.newCharacters.append(vnChar)
+        result.backspaceCount = hookState.backspaceCount
+
+        // For macro replacement, use macroData directly (no length limit)
+        if hookState.code == UInt8(vReplaceMacro) && !hookState.macroData.isEmpty {
+            // macroData is already in correct order, just convert to VNCharacter
+            for charData in hookState.macroData {
+                let vnChar = convertToVNCharacter(charData)
+                result.newCharacters.append(vnChar)
+            }
+        } else {
+            // Convert character data to VNCharacter array
+            // IMPORTANT: In OpenKey, charData is stored in reverse order (last character at index 0)
+            // So we need to read it in reverse order to get the correct sequence
+            // This matches OpenKey's SendNewCharString which reads from newCharCount-1 down to 0
+            for i in stride(from: Int(hookState.newCharCount) - 1, through: 0, by: -1) {
+                let charData = hookState.charData[i]
+                let vnChar = convertToVNCharacter(charData)
+                result.newCharacters.append(vnChar)
+            }
         }
         
         // IMPORTANT: When vRestore, OpenKey adds the current key to the output

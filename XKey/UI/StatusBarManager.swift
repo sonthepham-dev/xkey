@@ -14,6 +14,7 @@ class StatusBarManager: ObservableObject {
     let viewModel: StatusBarViewModel
     private var menuBarIconStyle: MenuBarIconStyle = .x
     weak var debugWindowController: DebugWindowController?
+    var onCheckForUpdates: (() -> Void)?
     
     init(keyboardHandler: KeyboardEventHandler?, eventTapManager: EventTapManager?) {
         self.viewModel = StatusBarViewModel(
@@ -185,6 +186,16 @@ class StatusBarManager: ObservableObject {
         
         menu.addItem(.separator())
         
+        // Check for Updates
+        let updateItem = menu.addItem(
+            withTitle: "Kiểm tra cập nhật...",
+            action: #selector(checkForUpdates),
+            keyEquivalent: ""
+        )
+        updateItem.target = self
+        
+        menu.addItem(.separator())
+        
         // Preferences
         let prefsItem = menu.addItem(
             withTitle: "Bảng điều khiển...",
@@ -298,6 +309,10 @@ class StatusBarManager: ObservableObject {
     
     @objc private func openConvertTool() {
         viewModel.openConvertTool()
+    }
+    
+    @objc private func checkForUpdates() {
+        onCheckForUpdates?()
     }
     
     @objc private func quit() {

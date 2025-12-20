@@ -7,6 +7,7 @@
 
 import Cocoa
 import SwiftUI
+import Sparkle
 
 class AppDelegate: NSObject, NSApplicationDelegate {
 
@@ -32,6 +33,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var inputSourceManager: InputSourceManager?
     private var switchXKeyHotkeyMonitor: Any?
     private var switchXKeyGlobalHotkeyMonitor: Any?
+    private var updaterController: SPUStandardUpdaterController?
 
     // MARK: - Initialization
 
@@ -95,6 +97,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Setup input source manager
         setupInputSourceManager()
+
+        // Setup Sparkle auto-update
+        setupSparkleUpdater()
 
         debugWindowController?.updateStatus("XKey started successfully")
         debugWindowController?.logEvent("✅ XKey started successfully")
@@ -284,6 +289,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         statusBarManager?.viewModel.onOpenConvertTool = { [weak self] in
             self?.openConvertTool()
+        }
+        statusBarManager?.onCheckForUpdates = { [weak self] in
+            self?.checkForUpdates()
         }
         statusBarManager?.setupStatusBar()
     }
@@ -858,6 +866,32 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     self.debugWindowController?.logEvent("⏹️ Input Source '\(source.displayName)' → Auto-disabled")
                 }
             }
+        }
+    }
+
+    // MARK: - Sparkle Auto-Update
+
+    private func checkForUpdates() {
+        debugWindowController?.logEvent("🔍 Manually checking for updates...")
+        updaterController?.updater.checkForUpdates()
+    }
+
+    private func setupSparkleUpdater() {
+        do {
+            // Initialize Sparkle updater controller
+            // This will automatically check for updates based on Info.plist settings:
+            // - SUFeedURL: appcast feed URL
+            // - SUPublicEDKey: public key for signature verification
+            // - SUEnableAutomaticChecks: enable automatic update checks
+            // - SUScheduledCheckInterval: check interval in seconds (86400 = 24 hours)
+            updaterController = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+            
+            debugWindowController?.logEvent("✅ Sparkle auto-update initialized")
+            debugWindowController?.logEvent("   Feed URL: \(Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") as? String ?? "Not configured")")
+            debugWindowController?.logEvent("   Auto-check: \(Bundle.main.object(forInfoDictionaryKey: "SUEnableAutomaticChecks") as? Bool ?? false)")
+            
+        } catch {
+            debugWindowController?.logEvent("❌ Failed to initialize Sparkle: \(error)")
         }
     }
 }

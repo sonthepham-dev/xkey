@@ -45,17 +45,17 @@ extension VNEngine {
         if let macroContent = macroManager.findMacro(key: hookState.macroKey) {
             // Found macro - prepare replacement
             hookState.code = UInt8(vReplaceMacro)
-            hookState.backspaceCount = UInt8(hookState.macroKey.count)
-            hookState.newCharCount = UInt8(macroContent.count)
-            
-            // Copy macro content to charData
-            for i in 0..<min(macroContent.count, VNEngine.MAX_BUFF) {
-                hookState.charData[macroContent.count - 1 - i] = macroContent[i]
-            }
-            
-            // Store macro data for reference
+            hookState.backspaceCount = hookState.macroKey.count
+
+            // Store full macro data (no length limit)
+            // macroData will be used directly in convertHookStateToResult
             hookState.macroData = macroContent
-            
+
+            // Note: We don't set newCharCount or charData for macros
+            // because we use macroData directly to support unlimited length
+
+            logCallback?("✅ Macro found! Will delete \(hookState.backspaceCount) chars and replace with \(macroContent.count) chars")
+
             hasHandledMacro = true
             return true
         }
