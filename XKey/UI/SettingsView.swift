@@ -166,7 +166,7 @@ struct GeneralSettingsSection: View {
                     VStack(alignment: .leading, spacing: 10) {
                         Toggle("Kiểu gõ hiện đại (oà/uý)", isOn: $viewModel.preferences.modernStyle)
                         Toggle("Kiểm tra chính tả", isOn: $viewModel.preferences.spellCheckEnabled)
-                        Toggle("Sửa lỗi tự động hoàn thành", isOn: $viewModel.preferences.fixAutocomplete)
+                        Toggle("Sửa lỗi tự động hoàn thành (áp dụng cho Chrome, Terminal...)", isOn: $viewModel.preferences.fixAutocomplete)
                     }
                 }
             }
@@ -298,6 +298,17 @@ struct AdvancedSettingsSection: View {
                             }
                             .padding(.leading, 20)  // Indent sub-option
                         }
+                    }
+                }
+                
+                // Window Title Rules
+                SettingsGroup(title: "Quy tắc theo Window Title") {
+                    if #available(macOS 13.0, *) {
+                        WindowTitleRulesView()
+                    } else {
+                        Text("Tính năng này yêu cầu macOS 13.0 trở lên")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
                 }
                 

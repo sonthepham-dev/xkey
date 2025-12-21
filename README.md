@@ -5,7 +5,7 @@
   
   **Bộ gõ tiếng Việt hiện đại cho macOS**
   
-  [![Version](https://img.shields.io/badge/version-1.2.6-blue.svg)](https://github.com/xmannv/xkey/releases)
+  [![Version](https://img.shields.io/badge/version-1.2.7-blue.svg)](https://github.com/xmannv/xkey/releases)
   [![macOS](https://img.shields.io/badge/macOS-12.0+-green.svg)](https://www.apple.com/macos/)
   [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 </div>
@@ -95,6 +95,22 @@ Tự động thay thế văn bản với Macro:
 - **Smart Switch**: Nhớ ngôn ngữ theo từng ứng dụng
 - **Tạm tắt thông minh**: Ctrl tắt chính tả, Option tắt bộ gõ
 - **Debug Window**: Theo dõi real-time hoạt động của bộ gõ
+
+### 8. Window Title Rules (Mới)
+
+Phát hiện ngữ cảnh đặc biệt dựa trên tiêu đề cửa sổ, giải quyết vấn đề gõ tiếng Việt trong các web apps:
+
+| Web App | Xử lý đặc biệt |
+|---------|----------------|
+| Google Docs/Sheets/Slides | Tắt marked text, slow injection |
+| Notion, Figma | Điều chỉnh delay phù hợp |
+
+**Ưu điểm:**
+- ✅ Tự động nhận diện web apps trong bất kỳ browser nào
+- ✅ Áp dụng xử lý phù hợp cho từng context
+- ✅ Có thể tùy chỉnh rules theo nhu cầu
+
+**Cấu hình:** Settings → Nâng cao → Quy tắc theo Window Title
 
 ---
 

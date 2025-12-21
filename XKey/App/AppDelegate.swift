@@ -86,6 +86,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Load and apply preferences
         let preferences = SharedSettings.shared.loadPreferences()
         
+        // Load custom Window Title Rules
+        AppBehaviorDetector.shared.loadCustomRules()
+        debugWindowController?.logEvent("  ✅ Loaded \(AppBehaviorDetector.shared.getCustomRules().count) custom Window Title Rules")
+        
         // Initialize components
         setupKeyboardHandling()
         setupStatusBar()
@@ -808,6 +812,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Get focused element role from Accessibility API
         let detector = AppBehaviorDetector.shared
         let elementRole = detector.getFocusedElementRole() ?? "Unknown"
+        
+        // Get window title
+        let windowTitle = detector.getCachedWindowTitle()
 
         // Get app behavior type
         let behavior = detector.detect()
@@ -833,19 +840,39 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Get injection method info
         let injectionInfo = detector.detectInjectionMethod()
-        let injectionMethod = injectionInfo.description
+        let injectionMethodName: String
+        switch injectionInfo.method {
+        case .fast: injectionMethodName = "Fast"
+        case .slow: injectionMethodName = "Slow"
+        case .selection: injectionMethodName = "Selection"
+        case .autocomplete: injectionMethodName = "Autocomplete"
+        }
 
         // Get current input source
         let inputSource = InputSourceManager.getCurrentInputSource()
         let inputSourceName = inputSource?.displayName ?? "Unknown"
+        
+        // Get matched Window Title Rule (if any)
+        let matchedRule = detector.findMatchingRule()
+        
+        // Get IMKit behavior
+        let imkitBehavior = detector.detectIMKitBehavior()
 
         // Log everything with nice formatting
         debugWindowController?.logEvent("🖱️ Mouse click detected")
         debugWindowController?.logEvent("   App: \(appName) (\(bundleId))")
+        debugWindowController?.logEvent("   Window: \(windowTitle.isEmpty ? "(no title)" : windowTitle)")
         debugWindowController?.logEvent("   Input Type: \(elementRole)")
         debugWindowController?.logEvent("   Behavior: \(behaviorName)")
-        debugWindowController?.logEvent("   Injection Method: \(injectionMethod)")
+        debugWindowController?.logEvent("   Injection: \(injectionMethodName) [bs:\(injectionInfo.delays.backspace)µs, wait:\(injectionInfo.delays.wait)µs, txt:\(injectionInfo.delays.text)µs]")
+        debugWindowController?.logEvent("   IMKit: markedText=\(imkitBehavior.useMarkedText), issues=\(imkitBehavior.hasMarkedTextIssues), delay=\(imkitBehavior.commitDelay)µs")
         debugWindowController?.logEvent("   Input Source: \(inputSourceName)")
+        
+        // Log matched rule if any
+        if let rule = matchedRule {
+            debugWindowController?.logEvent("   ✅ Rule: \(rule.name) (pattern: \"\(rule.titlePattern)\")")
+        }
+        
         debugWindowController?.logEvent("   → Engine reset, mid-sentence mode")
     }
 

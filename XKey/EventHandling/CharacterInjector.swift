@@ -82,11 +82,14 @@ class CharacterInjector {
         injectionSemaphore.wait()
         defer { injectionSemaphore.signal() }
         
-        let (method, delays) = detectInjectionMethod()
+        let methodInfo = detectInjectionMethod()
+        let method = methodInfo.method
+        let delays = methodInfo.delays
+        let textSendingMethod = methodInfo.textSendingMethod
 
         // Build preview of characters to inject
         let charPreview = characters.map { $0.unicode(codeTable: codeTable) }.joined()
-        debugCallback?("Inject: bs=\(backspaceCount), chars=\(characters.count), text=\"\(charPreview)\", method=\(method)")
+        debugCallback?("Inject: bs=\(backspaceCount), chars=\(characters.count), text=\"\(charPreview)\", method=\(method), textMode=\(textSendingMethod)")
 
         // IMPORTANT: Disable autocomplete fix when typing in middle of sentence
         let shouldFixAutocomplete = fixAutocomplete && !isTypingMidSentence
@@ -128,8 +131,15 @@ class CharacterInjector {
                 debugCallback?("  [\(index)]: '\(unicodeString)'")
             }
             
-            // Send text using chunking
-            sendTextChunkedInternal(fullString, delay: delays.text, proxy: proxy)
+            // Use text sending method from rule/detection
+            switch textSendingMethod {
+            case .oneByOne:
+                debugCallback?("    → Text mode: one-by-one")
+                sendTextOneByOneInternal(fullString, delay: delays.text, proxy: proxy)
+            case .chunked:
+                debugCallback?("    → Text mode: chunked")
+                sendTextChunkedInternal(fullString, delay: delays.text, proxy: proxy)
+            }
         }
         
         // Settle time
@@ -210,6 +220,36 @@ class CharacterInjector {
         }
     }
     
+    /// Internal: Send text one character at a time (for Safari/Google Docs compatibility)
+    /// Some apps don't handle multiple Unicode characters in a single CGEvent properly
+    private func sendTextOneByOneInternal(_ text: String, delay: UInt32, proxy: CGEventTapProxy) {
+        guard let source = eventSource else { return }
+        
+        debugCallback?("    → Sending text one-by-one: '\(text)' (\(text.count) chars)")
+        
+        for (index, char) in text.enumerated() {
+            var utf16 = Array(String(char).utf16)
+            
+            guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
+                  let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false) else {
+                break
+            }
+            
+            keyDown.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: &utf16)
+            keyUp.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: &utf16)
+            
+            keyDown.tapPostEvent(proxy)
+            keyUp.tapPostEvent(proxy)
+            
+            debugCallback?("    → Sent char [\(index)]: '\(char)'")
+            
+            // Add delay between characters (except after last one)
+            if delay > 0 && index < text.count - 1 {
+                usleep(delay)
+            }
+        }
+    }
+    
     // MARK: - Public Methods
 
     /// Send backspace key presses with optional autocomplete fix
@@ -223,7 +263,9 @@ class CharacterInjector {
         defer { endInjection() }
         
         // Detect injection method for current app
-        let (method, delays) = detectInjectionMethod()
+        let methodInfo = detectInjectionMethod()
+        let method = methodInfo.method
+        let delays = methodInfo.delays
         
         debugCallback?("sendBackspaces: count=\(count), method=\(method), fixAutocomplete=\(fixAutocomplete), isTypingMidSentence=\(isTypingMidSentence)")
         
@@ -328,9 +370,12 @@ class CharacterInjector {
         defer { endInjection() }
         
         // Get injection method and delays
-        let (method, delays) = detectInjectionMethod()
+        let methodInfo = detectInjectionMethod()
+        let method = methodInfo.method
+        let delays = methodInfo.delays
+        let textSendingMethod = methodInfo.textSendingMethod
         
-        debugCallback?("sendCharacters: count=\(characters.count), method=\(method)")
+        debugCallback?("sendCharacters: count=\(characters.count), method=\(method), textMode=\(textSendingMethod)")
         
         // Build full string from characters
         var fullString = ""
@@ -340,8 +385,13 @@ class CharacterInjector {
             debugCallback?("  [\(index)]: '\(unicodeString)' (Unicode: \(unicodeString.unicodeScalars.map { String(format: "U+%04X", $0.value) }.joined(separator: ", ")))")
         }
         
-        // Send text using chunking (20 chars per CGEvent - macOS limit)
-        sendTextChunked(fullString, delay: delays.text, proxy: proxy)
+        // Send text using configured method
+        switch textSendingMethod {
+        case .oneByOne:
+            sendTextOneByOne(fullString, delay: delays.text, proxy: proxy)
+        case .chunked:
+            sendTextChunked(fullString, delay: delays.text, proxy: proxy)
+        }
         
         // Settle time: adaptive based on method
         // Reduced from 20ms to 8ms for slow apps thanks to semaphore sync
@@ -459,6 +509,36 @@ class CharacterInjector {
             }
             
             offset = end
+        }
+    }
+    
+    /// Send text one character at a time (for Safari/Google Docs compatibility)
+    /// Some apps don't handle multiple Unicode characters in a single CGEvent properly
+    private func sendTextOneByOne(_ text: String, delay: UInt32, proxy: CGEventTapProxy) {
+        guard let source = eventSource else { return }
+        
+        debugCallback?("    → Sending text one-by-one: '\(text)' (\(text.count) chars)")
+        
+        for (index, char) in text.enumerated() {
+            var utf16 = Array(String(char).utf16)
+            
+            guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
+                  let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false) else {
+                break
+            }
+            
+            keyDown.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: &utf16)
+            keyUp.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: &utf16)
+            
+            keyDown.tapPostEvent(proxy)
+            keyUp.tapPostEvent(proxy)
+            
+            debugCallback?("    → Sent char [\(index)]: '\(char)'")
+            
+            // Add delay between characters (except after last one)
+            if delay > 0 && index < text.count - 1 {
+                usleep(delay)
+            }
         }
     }
     
@@ -689,17 +769,17 @@ class CharacterInjector {
     
     /// Detect injection method based on frontmost app and focused element
     /// Uses AppBehaviorDetector for centralized app detection
-    func detectInjectionMethod() -> (InjectionMethod, InjectionDelays) {
+    func detectInjectionMethod() -> InjectionMethodInfo {
         // Use AppBehaviorDetector (Single Source of Truth)
         let methodInfo = AppBehaviorDetector.shared.detectInjectionMethod()
         
-        debugCallback?("    → detectMethod: \(methodInfo.description) → \(methodInfo.method)")
+        debugCallback?("    → detectMethod: \(methodInfo.description) → \(methodInfo.method), textMode=\(methodInfo.textSendingMethod)")
         
         // Update local cache for compatibility
         cachedMethod = methodInfo.method
         cachedDelays = methodInfo.delays
         
-        return (methodInfo.method, methodInfo.delays)
+        return methodInfo
     }
     
     /// Clear cached injection method (call when app changes)
