@@ -147,9 +147,10 @@ class StatusBarManager: ObservableObject {
         )
         inputMethodItem.submenu = inputMethodMenu
         
-        // Code Table submenu
+        // Code Table submenu (filter out experimental code tables)
         let codeTableMenu = NSMenu()
-        for table in CodeTable.allCases {
+        let supportedCodeTables = CodeTable.allCases.filter { $0 != .unicodeCompound && $0 != .vietnameseLocaleCP1258 }
+        for table in supportedCodeTables {
             let item = codeTableMenu.addItem(
                 withTitle: table.displayName,
                 action: #selector(selectCodeTable(_:)),
@@ -250,10 +251,11 @@ class StatusBarManager: ObservableObject {
             }
         }
         
-        // Update code table submenu
+        // Update code table submenu (filter out experimental code tables)
         if let codeTableItem = menu.item(withTitle: "Bảng mã"),
            let submenu = codeTableItem.submenu {
-            for table in CodeTable.allCases {
+            let supportedCodeTables = CodeTable.allCases.filter { $0 != .unicodeCompound && $0 != .vietnameseLocaleCP1258 }
+            for table in supportedCodeTables {
                 if let item = submenu.item(withTag: table.rawValue) {
                     item.state = (table == viewModel.currentCodeTable) ? .on : .off
                 }

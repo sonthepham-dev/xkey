@@ -144,8 +144,10 @@ struct VNCharacterMap {
         codeTable: CodeTable
     ) -> String {
         switch codeTable {
-        case .unicode, .unicodeCompound:
+        case .unicode:
             return getUnicodeCharacter(vowel: vowel, tone: tone, isUppercase: isUppercase)
+        case .unicodeCompound:
+            return getUnicodeCompoundCharacter(vowel: vowel, tone: tone, isUppercase: isUppercase)
         case .tcvn3:
             return getTCVN3Character(vowel: vowel, tone: tone, isUppercase: isUppercase)
         case .vniWindows:
@@ -173,6 +175,87 @@ struct VNCharacterMap {
         return String(unicodeScalar)
     }
     
+    // MARK: - Unicode Compound (NFD - Decomposed Unicode)
+    
+    // Combining diacritical marks
+    private static let combiningAcute: UInt32 = 0x0301       // ́  Combining Acute Accent
+    private static let combiningGrave: UInt32 = 0x0300       // ̀  Combining Grave Accent
+    private static let combiningHookAbove: UInt32 = 0x0309   // ̉  Combining Hook Above
+    private static let combiningTilde: UInt32 = 0x0303       // ̃  Combining Tilde
+    private static let combiningDotBelow: UInt32 = 0x0323    // ̣  Combining Dot Below
+    private static let combiningCircumflex: UInt32 = 0x0302  // ̂  Combining Circumflex Accent
+    private static let combiningBreve: UInt32 = 0x0306       // ̆  Combining Breve
+    private static let combiningHorn: UInt32 = 0x031B        // ̛  Combining Horn
+    
+    /// Get combining mark for tone
+    private static func getCombiningTone(_ tone: VNTone) -> UInt32? {
+        switch tone {
+        case .none: return nil
+        case .acute: return combiningAcute
+        case .grave: return combiningGrave
+        case .hookAbove: return combiningHookAbove
+        case .tilde: return combiningTilde
+        case .dotBelow: return combiningDotBelow
+        }
+    }
+    
+    /// Unicode Compound: Base char + combining diacritics (NFD normalization)
+    /// Example: ấ = a + ̂ + ́ (U+0061 + U+0302 + U+0301)
+    private static func getUnicodeCompoundCharacter(
+        vowel: VNVowel,
+        tone: VNTone,
+        isUppercase: Bool
+    ) -> String {
+        var result = ""
+        
+        // Step 1: Get base character (a, e, i, o, u, y)
+        let baseChar: UInt32
+        switch vowel {
+        case .a, .aCircumflex, .aBreve:
+            baseChar = isUppercase ? 0x0041 : 0x0061  // A, a
+        case .e, .eCircumflex:
+            baseChar = isUppercase ? 0x0045 : 0x0065  // E, e
+        case .i:
+            baseChar = isUppercase ? 0x0049 : 0x0069  // I, i
+        case .o, .oCircumflex, .oHorn:
+            baseChar = isUppercase ? 0x004F : 0x006F  // O, o
+        case .u, .uHorn:
+            baseChar = isUppercase ? 0x0055 : 0x0075  // U, u
+        case .y:
+            baseChar = isUppercase ? 0x0059 : 0x0079  // Y, y
+        }
+        
+        if let scalar = UnicodeScalar(baseChar) {
+            result.append(Character(scalar))
+        }
+        
+        // Step 2: Add combining modifier (circumflex, breve, horn) if needed
+        switch vowel {
+        case .aCircumflex, .eCircumflex, .oCircumflex:
+            if let scalar = UnicodeScalar(combiningCircumflex) {
+                result.append(Character(scalar))
+            }
+        case .aBreve:
+            if let scalar = UnicodeScalar(combiningBreve) {
+                result.append(Character(scalar))
+            }
+        case .oHorn, .uHorn:
+            if let scalar = UnicodeScalar(combiningHorn) {
+                result.append(Character(scalar))
+            }
+        default:
+            break
+        }
+        
+        // Step 3: Add combining tone mark if needed
+        if let combiningTone = getCombiningTone(tone),
+           let scalar = UnicodeScalar(combiningTone) {
+            result.append(Character(scalar))
+        }
+        
+        return result
+    }
+    
     private static func getTCVN3Character(
         vowel: VNVowel,
         tone: VNTone,
@@ -193,13 +276,63 @@ struct VNCharacterMap {
         return getUnicodeCharacter(vowel: vowel, tone: tone, isUppercase: isUppercase)
     }
     
+    // MARK: - CP1258 (Windows Vietnamese Locale)
+    
+    // CP1258 uses precomposed base vowels with diacritics (â, ă, ê, ô, ơ, ư, đ)
+    // but combining characters for tone marks
+    // This is different from Unicode Compound which decomposes everything
+    
+    /// CP1258 base vowel mapping (precomposed with circumflex/breve/horn)
+    private static let cp1258BaseMap: [VNVowel: (lowercase: UInt32, uppercase: UInt32)] = [
+        // Plain vowels
+        .a: (0x0061, 0x0041),            // a, A
+        .e: (0x0065, 0x0045),            // e, E
+        .i: (0x0069, 0x0049),            // i, I
+        .o: (0x006F, 0x004F),            // o, O
+        .u: (0x0075, 0x0055),            // u, U
+        .y: (0x0079, 0x0059),            // y, Y
+        
+        // Vowels with circumflex (precomposed)
+        .aCircumflex: (0x00E2, 0x00C2),  // â, Â
+        .eCircumflex: (0x00EA, 0x00CA),  // ê, Ê
+        .oCircumflex: (0x00F4, 0x00D4),  // ô, Ô
+        
+        // Vowels with breve (precomposed)
+        .aBreve: (0x0103, 0x0102),       // ă, Ă
+        
+        // Vowels with horn (precomposed)
+        .oHorn: (0x01A1, 0x01A0),        // ơ, Ơ
+        .uHorn: (0x01B0, 0x01AF)         // ư, Ư
+    ]
+    
+    /// CP1258: Precomposed base + combining tone marks
+    /// Example: ấ = â (U+00E2) + ́ (U+0301)
+    /// This matches Windows Vietnamese input behavior
     private static func getCP1258Character(
         vowel: VNVowel,
         tone: VNTone,
         isUppercase: Bool
     ) -> String {
-        // CP1258 mapping implementation
-        return getUnicodeCharacter(vowel: vowel, tone: tone, isUppercase: isUppercase)
+        var result = ""
+        
+        // Step 1: Get precomposed base character
+        guard let baseValue = cp1258BaseMap[vowel] else {
+            return getUnicodeCharacter(vowel: vowel, tone: tone, isUppercase: isUppercase)
+        }
+        
+        let baseChar = isUppercase ? baseValue.uppercase : baseValue.lowercase
+        if let scalar = UnicodeScalar(baseChar) {
+            result.append(Character(scalar))
+        }
+        
+        // Step 2: Add combining tone mark if needed
+        // CP1258 uses the same combining marks as Unicode Compound for tones
+        if let combiningTone = getCombiningTone(tone),
+           let scalar = UnicodeScalar(combiningTone) {
+            result.append(Character(scalar))
+        }
+        
+        return result
     }
 }
 

@@ -3,10 +3,11 @@
 //  XKey
 //
 //  English word detection for spell checking optimization
-//  Helps skip Vietnamese processing for definitely English words
 //
 
 import Foundation
+
+// MARK: - Fast English Detection (for spell check optimization)
 
 extension String {
     
@@ -100,6 +101,8 @@ extension String {
     }
 }
 
+// MARK: - VNEngine Helper Extensions
+
 extension VNEngine {
     
     /// Get current typing word as a String for analysis
@@ -110,6 +113,23 @@ extension VNEngine {
         var result = ""
         for i in 0..<Int(index) {
             let keyCode = UInt16(typingWord[i] & VNEngine.CHAR_MASK)
+            
+            // Convert keyCode to character
+            if let char = keyCodeToCharacter(keyCode) {
+                result.append(char)
+            }
+        }
+        
+        return result
+    }
+    
+    /// Get raw input keys as a String (original ASCII without Vietnamese transforms)
+    func getRawInputString() -> String {
+        guard stateIndex > 0 else { return "" }
+        
+        var result = ""
+        for i in 0..<Int(stateIndex) {
+            let keyCode = UInt16(keyStates[i] & VNEngine.CHAR_MASK)
             
             // Convert keyCode to character
             if let char = keyCodeToCharacter(keyCode) {

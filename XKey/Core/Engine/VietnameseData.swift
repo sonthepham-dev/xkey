@@ -599,10 +599,17 @@ class VietnameseData {
     ]
     
     // All code tables array
+    // Index 0: Unicode
+    // Index 1: TCVN3 (ABC)
+    // Index 2: VNI Windows
+    // Index 3: Unicode Compound (uses same character codes as Unicode, differs in output encoding)
+    // Index 4: Vietnamese Locale CP1258 (uses same character codes as Unicode, differs in output encoding)
     lazy var codeTables: [[UInt32: [UInt32]]] = [
-        unicodeCodeTable,
-        tcvn3CodeTable,
-        vniWindowsCodeTable
+        unicodeCodeTable,           // 0: Unicode
+        tcvn3CodeTable,             // 1: TCVN3 (ABC)
+        vniWindowsCodeTable,        // 2: VNI Windows
+        unicodeCodeTable,           // 3: Unicode Compound (same Unicode chars, different output)
+        unicodeCodeTable            // 4: Vietnamese Locale CP1258 (same Unicode chars, different output)
     ]
     
     // MARK: - Helper Functions

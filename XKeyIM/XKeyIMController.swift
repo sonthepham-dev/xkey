@@ -92,7 +92,7 @@ class XKeyIMController: IMKInputController {
         engineSettings.codeTable = settings.codeTable
         engineSettings.modernStyle = settings.modernStyle
         engineSettings.spellCheckEnabled = settings.spellCheckEnabled
-        engineSettings.englishDetectionEnabled = settings.englishDetectionEnabled
+
         engineSettings.quickTelexEnabled = settings.quickTelexEnabled
         engineSettings.freeMarking = settings.freeMarkEnabled
         engineSettings.restoreIfWrongSpelling = settings.restoreIfWrongSpelling
@@ -784,7 +784,7 @@ class XKeyIMSettings {
     var codeTable: CodeTable = .unicode
     var modernStyle: Bool = true
     var spellCheckEnabled: Bool = true
-    var englishDetectionEnabled: Bool = false  // Experimental: Skip Vietnamese processing for English words
+
     var quickTelexEnabled: Bool = true
     var freeMarkEnabled: Bool = false
     var restoreIfWrongSpelling: Bool = true
@@ -814,7 +814,7 @@ class XKeyIMSettings {
         // Boolean settings
         modernStyle = readBool(forKey: "XKey.modernStyle")
         spellCheckEnabled = readBool(forKey: "XKey.spellCheckEnabled")
-        englishDetectionEnabled = readBool(forKey: "XKey.englishDetectionEnabled")
+
         quickTelexEnabled = readBool(forKey: "XKey.quickTelexEnabled", defaultValue: true)
         freeMarkEnabled = readBool(forKey: "XKey.freeMarkEnabled")
         restoreIfWrongSpelling = readBool(forKey: "XKey.restoreIfWrongSpelling", defaultValue: true)

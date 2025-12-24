@@ -40,10 +40,6 @@ class KeyboardEventHandler: EventTapManager.EventTapDelegate {
         didSet { updateEngineSettings() }
     }
     
-    @Published var englishDetectionEnabled: Bool = false {
-        didSet { updateEngineSettings() }
-    }
-    
     @Published var fixAutocomplete: Bool = true {
         didSet { updateEngineSettings() }
     }
@@ -68,6 +64,8 @@ class KeyboardEventHandler: EventTapManager.EventTapDelegate {
     @Published var restoreIfWrongSpelling: Bool = true {
         didSet { updateEngineSettings() }
     }
+    
+
     
     @Published var allowConsonantZFWJ: Bool = false {
         didSet { updateEngineSettings() }
@@ -408,7 +406,7 @@ class KeyboardEventHandler: EventTapManager.EventTapDelegate {
         if isWordBreakKey(character) {
             let result = engine.processWordBreak(character: character)
             
-            // Check if macro was found and replaced
+            // Check if macro was found and replaced, or restore happened
             if result.shouldConsume {
                 // Send backspaces
                 if result.backspaceCount > 0 {
@@ -420,13 +418,15 @@ class KeyboardEventHandler: EventTapManager.EventTapDelegate {
                     )
                 }
                 
-                // Send macro replacement characters
+                // Send replacement characters (includes the space character for restore/macro)
                 if !result.newCharacters.isEmpty {
                     injector.sendCharacters(result.newCharacters, codeTable: codeTable, proxy: proxy)
                 }
                 
-                // Send the word break character (space, etc.) after macro
-                // Don't consume - let it pass through
+                // IMPORTANT: When restore or macro replacement happens, the space character
+                // is already included in result.newCharacters. We must consume the event
+                // to prevent a double space from being inserted.
+                return nil
             }
             // NOTE: Do NOT reset mid-sentence flag on Enter/Return
             // When user presses Enter in the middle of text (e.g., line 2 of 3 lines),
@@ -542,7 +542,6 @@ class KeyboardEventHandler: EventTapManager.EventTapDelegate {
         settings.codeTable = codeTable
         settings.modernStyle = modernStyle
         settings.spellCheckEnabled = spellCheckEnabled
-        settings.englishDetectionEnabled = englishDetectionEnabled
         settings.fixAutocomplete = fixAutocomplete
         
         // Advanced features
@@ -551,6 +550,7 @@ class KeyboardEventHandler: EventTapManager.EventTapDelegate {
         settings.quickEndConsonantEnabled = quickEndConsonantEnabled
         settings.upperCaseFirstChar = upperCaseFirstChar
         settings.restoreIfWrongSpelling = restoreIfWrongSpelling
+
         settings.allowConsonantZFWJ = allowConsonantZFWJ
         settings.freeMarking = freeMarkEnabled
         settings.tempOffSpellingEnabled = tempOffSpellingEnabled
@@ -567,7 +567,7 @@ class KeyboardEventHandler: EventTapManager.EventTapDelegate {
         engine.updateSettings(settings)
         
         // Debug: Log spell check setting sync
-        debugLogCallback?("⚙️ Settings sync: spellCheckEnabled=\(spellCheckEnabled) → vCheckSpelling=\(engine.vCheckSpelling), englishDetectionEnabled=\(englishDetectionEnabled) → vEnglishDetection=\(engine.vEnglishDetection)")
+        debugLogCallback?("⚙️ Settings sync: spellCheckEnabled=\(spellCheckEnabled) → vCheckSpelling=\(engine.vCheckSpelling)")
         
         // Update macro manager
         macroManager.setCodeTable(codeTable.rawValue)

@@ -53,8 +53,12 @@ struct GeneralSection: View {
                 
                 // Code Table
                 SettingsGroup(title: "Bảng mã") {
+                    // Filter out experimental code tables (not fully tested yet)
+                    let supportedCodeTables = CodeTable.allCases.filter { table in
+                        table != .unicodeCompound && table != .vietnameseLocaleCP1258
+                    }
                     LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
-                        ForEach(CodeTable.allCases, id: \.self) { table in
+                        ForEach(supportedCodeTables, id: \.self) { table in
                             SettingsRadioButton(
                                 title: table.displayName,
                                 isSelected: viewModel.preferences.codeTable == table
@@ -69,21 +73,7 @@ struct GeneralSection: View {
                 SettingsGroup(title: "Tùy chọn") {
                     VStack(alignment: .leading, spacing: 10) {
                         Toggle("Kiểu gõ hiện đại (oà/uý)", isOn: $viewModel.preferences.modernStyle)
-                        Toggle("Kiểm tra chính tả", isOn: $viewModel.preferences.spellCheckEnabled)
                         Toggle("Sửa lỗi tự động hoàn thành (áp dụng cho Chrome, Terminal...)", isOn: $viewModel.preferences.fixAutocomplete)
-                    }
-                }
-                
-                // Experimental Features
-                SettingsGroup(title: "Thử nghiệm") {
-                    VStack(alignment: .leading, spacing: 10) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Toggle("Phát hiện từ tiếng Anh", isOn: $viewModel.preferences.englishDetectionEnabled)
-                            
-                            Text("Bỏ qua xử lý tiếng Việt khi phát hiện từ tiếng Anh (ví dụ: \"street\", \"check\"). Tính năng này đang trong giai đoạn thử nghiệm.")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
                     }
                 }
             }

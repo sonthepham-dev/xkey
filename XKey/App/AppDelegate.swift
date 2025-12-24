@@ -119,6 +119,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Setup Sparkle auto-update
         setupSparkleUpdater()
 
+        // Load Vietnamese dictionary if spell checking is enabled
+        setupSpellCheckDictionary()
+
         debugWindowController?.updateStatus("XKey started successfully")
         debugWindowController?.logEvent("✅ XKey started successfully")
     }
@@ -383,7 +386,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         keyboardHandler?.codeTable = preferences.codeTable
         keyboardHandler?.modernStyle = preferences.modernStyle
         keyboardHandler?.spellCheckEnabled = preferences.spellCheckEnabled
-        keyboardHandler?.englishDetectionEnabled = preferences.englishDetectionEnabled
         keyboardHandler?.fixAutocomplete = preferences.fixAutocomplete
         
         // Apply advanced features
@@ -800,16 +802,29 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func setupMouseClickMonitor() {
         // Monitor mouse clicks to detect focus changes
         // When user clicks, they might be switching between input fields or moving cursor
+        
+        // Global monitor - catches clicks in OTHER apps
         mouseClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+            // Log that mouse click was detected (always visible, not verbose)
+            self?.debugWindowController?.logEvent("🖱️ Mouse click (global) → resetting engine buffer")
+            
             // Reset engine when mouse is clicked (likely focus change or cursor move)
             // Mark as cursor moved to disable autocomplete fix (avoid deleting text on right)
             self?.keyboardHandler?.resetWithCursorMoved()
 
-            // Log detailed input detection info
+            // Log detailed input detection info (only when verbose logging is on - handled inside function)
             self?.logMouseClickInputDetection()
         }
+        
+        // Local monitor - catches clicks within XKey app itself (Debug window, Settings, etc.)
+        // This ensures engine resets even when interacting with XKey's own UI
+        NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+            // Reset engine when clicking within XKey app
+            self?.keyboardHandler?.resetWithCursorMoved()
+            return event  // Pass through the event
+        }
 
-        debugWindowController?.logEvent("  ✅ Mouse click monitor registered")
+        debugWindowController?.logEvent("  ✅ Mouse click monitor registered (global + local)")
     }
 
     /// Log detailed information about the input type when mouse is clicked
@@ -1044,6 +1059,34 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             
         } catch {
             debugWindowController?.logEvent("❌ Failed to initialize Sparkle: \(error)")
+        }
+    }
+
+    // MARK: - Spell Check Dictionary Setup
+
+    private func setupSpellCheckDictionary() {
+        let preferences = SharedSettings.shared.loadPreferences()
+
+        guard preferences.spellCheckEnabled else {
+            debugWindowController?.logEvent("  ⏭️ Spell checking disabled, skipping dictionary load")
+            return
+        }
+
+        let style: VNDictionaryManager.DictionaryStyle = preferences.modernStyle ? .dauMoi : .dauCu
+
+        // Check if dictionary is already available locally
+        if VNDictionaryManager.shared.isDictionaryAvailable(style: style) {
+            // Load from local storage
+            do {
+                try VNDictionaryManager.shared.loadDictionary(style: style)
+                let stats = VNDictionaryManager.shared.getDictionaryStats()
+                let count = stats[style.rawValue] ?? 0
+                debugWindowController?.logEvent("  ✅ Loaded \(style.rawValue) dictionary (\(count) words)")
+            } catch {
+                debugWindowController?.logEvent("  ⚠️ Failed to load dictionary: \(error.localizedDescription)")
+            }
+        } else {
+            debugWindowController?.logEvent("  ℹ️ Dictionary not found. User can download from Settings > Spell Checking")
         }
     }
 }

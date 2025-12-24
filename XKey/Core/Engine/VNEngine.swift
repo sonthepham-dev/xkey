@@ -34,6 +34,23 @@ class VNEngine {
     static let END_CONSONANT_MASK: UInt32  = 0x4000
     static let CONSONANT_ALLOW_MASK: UInt32 = 0x8000
     
+    /// Convert macOS virtual key code to printable character for logging
+    static func keyCodeToChar(_ keyCode: UInt16) -> Character? {
+        // Mapping based on VietnameseData key codes (macOS virtual key codes)
+        let mapping: [UInt16: Character] = [
+            0x00: "a", 0x01: "s", 0x02: "d", 0x03: "f", 0x04: "h", 0x05: "g",
+            0x06: "z", 0x07: "x", 0x08: "c", 0x09: "v", 0x0B: "b", 0x0C: "q",
+            0x0D: "w", 0x0E: "e", 0x0F: "r", 0x10: "y", 0x11: "t",
+            0x12: "1", 0x13: "2", 0x14: "3", 0x15: "4", 0x16: "6", 0x17: "5",
+            0x18: "=", 0x19: "9", 0x1A: "7", 0x1B: "-", 0x1C: "8", 0x1D: "0",
+            0x1E: "]", 0x1F: "o", 0x20: "u", 0x21: "[", 0x22: "i", 0x23: "p",
+            0x25: "l", 0x26: "j", 0x27: "'", 0x28: "k", 0x29: ";",
+            0x2A: "\\", 0x2B: ",", 0x2C: "/", 0x2D: "n", 0x2E: "m", 0x2F: ".",
+            0x32: "`", 0x31: " "  // space
+        ]
+        return mapping[keyCode]
+    }
+    
     // MARK: - Settings (from Engine.h)
     
     var vLanguage = 1              // 0: English, 1: Vietnamese
@@ -55,7 +72,6 @@ class VNEngine {
     var vQuickStartConsonant = 0   // 0: No, 1: Yes (f->ph, j->gi, w->qu)
     var vQuickEndConsonant = 0     // 0: No, 1: Yes (g->ng, h->nh, k->ch)
     var vTempOffOpenKey = 0        // 0: No, 1: Yes (temp off engine with Option key)
-    var vEnglishDetection = 0      // 0: No, 1: Yes (experimental: skip Vietnamese for detected English words)
     
     // MARK: - Internal State (from Engine.cpp)
     // Note: Using internal access for extension support
@@ -76,6 +92,8 @@ class VNEngine {
     var useSpellCheckingBefore = false
     var hasHandleQuickConsonant = false
     var willTempOffEngine = false
+    
+
     
     // MARK: - Logging
     
@@ -125,6 +143,11 @@ class VNEngine {
     ///   - hasOtherModifier: Whether Ctrl/Cmd/Option is pressed
     /// - Returns: HookState with processing result
     func handleKeyEvent(keyCode: UInt16, character: Character, isUppercase: Bool, hasOtherModifier: Bool) -> HookState {
+        // Debug: Log Space key
+        if keyCode == VietnameseData.KEY_SPACE {
+            logCallback?("⌨️ SPACE KEY RECEIVED: keyCode=\(keyCode), index=\(index)")
+        }
+        
         // Save macroKey before reset (it accumulates across key events)
         let savedMacroKey = hookState.macroKey
         
@@ -267,6 +290,8 @@ class VNEngine {
     // MARK: - Space Handling
     
     private func handleSpace() {
+        logCallback?("handleSpace: index=\(index), tempDisableKey=\(tempDisableKey)")
+        
         if !tempDisableKey && vCheckSpelling == 1 {
             checkSpelling(forceCheckVowel: true)
         }
@@ -485,6 +510,8 @@ class VNEngine {
             }
             upperCaseStatus = 0
         }
+        
+
         
         // Handle bracket keys
         if isBracketKey(keyCode: keyCode) && (isBracketKey(hookState.charData[0]) || vInputType == 2 || vInputType == 3) {
@@ -996,7 +1023,8 @@ class VNEngine {
     // MARK: - Insert Functions
     
     func insertKey(keyCode: UInt16, isCaps: Bool, isCheckSpelling: Bool = true) {
-        logCallback?("insertKey: keyCode=\(keyCode), isCaps=\(isCaps), currentIndex=\(index)")
+        let charDisplay = Self.keyCodeToChar(keyCode).map { " '\($0)'" } ?? ""
+        logCallback?("insertKey: keyCode=\(keyCode)\(charDisplay), isCaps=\(isCaps), currentIndex=\(index)")
         if index >= VNEngine.MAX_BUFF {
             longWordHelper.append(typingWord[0])
             // Left shift
@@ -1064,6 +1092,7 @@ class VNEngine {
                 } else {
                     typingWord[i] |= VNEngine.TONE_MASK
                     hookState.charData[Int(index) - 1 - i] = getCharacterCode(typingWord[i])
+
                 }
                 break
             } else {
@@ -1086,6 +1115,7 @@ class VNEngine {
         }
         
         hookState.code = UInt8(vWillProcess)
+
         hookState.backspaceCount = 0
         
         // Check if we need to move mark from previous vowel to this one
@@ -1204,6 +1234,7 @@ class VNEngine {
                 tempDisableKey = true
             } else {
                 hookState.code = UInt8(vWillProcess)
+
                 
                 // Apply W tone based on vowel combination
                 if v1Key == VietnameseData.KEY_U && v2Key == VietnameseData.KEY_O {
@@ -1245,6 +1276,7 @@ class VNEngine {
         
         // Single vowel case
         hookState.code = UInt8(vWillProcess)
+
         hookState.backspaceCount = 0
         
         for i in stride(from: Int(index) - 1, through: 0, by: -1) {
@@ -1372,221 +1404,53 @@ class VNEngine {
     
     func checkSpelling(forceCheckVowel: Bool = false) {
         // Defensive check: Respect vCheckSpelling setting
-        // Even though callers should check this, we add it here as a safety measure
-        // to prevent unnecessary execution when spell check is disabled
         guard vCheckSpelling == 1 else {
             // When spell check is disabled, don't modify spelling state
-            // Just ensure tempDisableKey stays false to allow free typing
             return
         }
         
-        spellingOK = false
+        logCallback?("checkSpelling: index=\(index), word=\(getCurrentWord()), forceCheckVowel=\(forceCheckVowel)")
+        
+        // Reset spelling state - always pass phonetic check (we only use dictionary now)
+        spellingOK = true
         spellingVowelOK = true
         spellingEndIndex = index
         
-        logCallback?("checkSpelling: index=\(index), word=\(getCurrentWord()), vAllowConsonantZFWJ=\(vAllowConsonantZFWJ)")
-        
-        // Early exit optimization: Skip Vietnamese spell check for definitely English words
-        // This is an EXPERIMENTAL feature that must be explicitly enabled via vEnglishDetection
-        // When enabled, it improves performance and reduces false positives for English words
-        if vEnglishDetection == 1 && index >= 3 && isCurrentWordDefinitelyEnglish() {
-            logCallback?("  → Detected English word, skipping Vietnamese spell check")
-            spellingOK = false
-            spellingVowelOK = false
-            tempDisableKey = true
+        // Skip if empty word
+        guard index > 0 else {
+            tempDisableKey = false
             return
         }
         
-        if index > 0 && chr(Int(index) - 1) == VietnameseData.KEY_RIGHT_BRACKET {
-            spellingEndIndex = index - 1
+        // IMPORTANT: Only check dictionary when forceCheckVowel=true (on Space/word break)
+        // During normal typing, the word is incomplete so dictionary check would fail
+        // Example: "tie" is not a Vietnamese word, but "tiếng" is
+        // We should NOT block diacritics just because the incomplete word isn't in dictionary
+        guard forceCheckVowel else {
+            // During normal typing, always allow diacritics
+            tempDisableKey = false
+            logCallback?("checkSpelling: Normal typing, skipping dictionary check")
+            return
         }
         
-        if spellingEndIndex > 0 {
-            var j = 0
+        // Dictionary validation (only on word break)
+        var dictionaryOK = true
+        
+        if SharedSettings.shared.spellCheckEnabled {
+            let style: VNDictionaryManager.DictionaryStyle = SharedSettings.shared.modernStyle ? .dauMoi : .dauCu
             
-            // Check first consonant
-            if vietnameseData.isConsonant(chr(0)) {
-                var foundMatch = false
-                for consonant in vietnameseData.consonantTable {
-                    // Skip if word is shorter than consonant pattern
-                    if spellingEndIndex < consonant.count {
-                        continue
-                    }
-                    
-                    var isMatch = true
-                    j = 0
-                    for keyInConsonant in consonant {
-                        if spellingEndIndex > j {
-                            let currentKey = chr(j)
-                            
-                            // Check if this consonant entry requires special permission
-                            let hasAllowMask = (keyInConsonant & UInt16(VNEngine.CONSONANT_ALLOW_MASK)) != 0
-                            let hasEndMask = (keyInConsonant & UInt16(VNEngine.END_CONSONANT_MASK)) != 0
-                            
-                            // Get the base key without masks
-                            let baseKey = keyInConsonant & ~UInt16(VNEngine.CONSONANT_ALLOW_MASK) & ~UInt16(VNEngine.END_CONSONANT_MASK)
-                            
-                            // This entry requires CONSONANT_ALLOW_MASK but it's disabled
-                            if hasAllowMask && vAllowConsonantZFWJ != 1 {
-                                isMatch = false
-                                break
-                            }
-                            // This entry requires END_CONSONANT_MASK but it's disabled
-                            if hasEndMask && vQuickStartConsonant != 1 {
-                                isMatch = false
-                                break
-                            }
-                            
-                            // Check if base key matches current key
-                            if baseKey != currentKey {
-                                isMatch = false
-                                break
-                            }
-                        }
-                        j += 1
-                    }
-                    
-                    if isMatch {
-                        foundMatch = true
-                        break  // Found a matching consonant pattern
-                    }
-                }
-                
-                // If no consonant pattern matched, j stays at 0
-                if !foundMatch {
-                    j = 0
-                }
-            }
-            
-            if j == spellingEndIndex {
-                spellingOK = true
-            }
-            
-            // Check vowel
-            var k = j
-            vowelStartIndex = k
-            
-            // Fix case "que't"
-            if chr(vowelStartIndex) == VietnameseData.KEY_U && k > 0 && k < Int(spellingEndIndex) - 1 &&
-               chr(vowelStartIndex - 1) == VietnameseData.KEY_Q {
-                k += 1
-                j = k
-                vowelStartIndex = k
-            } else if index >= 2 && chr(0) == VietnameseData.KEY_G &&
-                      chr(1) == VietnameseData.KEY_I && vietnameseData.isConsonant(chr(2)) {
-                vowelStartIndex = 1
-                k = 1
-                j = 1
-            }
-            
-            for _ in 0..<3 {
-                if k < spellingEndIndex && !vietnameseData.isConsonant(chr(k)) {
-                    k += 1
-                    vowelEndIndex = k
-                }
-            }
-            
-            if k > j { // has vowel
-                spellingVowelOK = false
-                
-                // Check correct combined vowel - OpenKey: forceCheckVowel
-                if k - j > 1 && forceCheckVowel {
-                    let firstVowelKey = chr(j)
-                    if let vowelSet = vietnameseData.vowelCombine[firstVowelKey] {
-                        for vowelPattern in vowelSet {
-                            var spellingFlag = false
-                            var ii = 1
-                            while ii < vowelPattern.count {
-                                let patternIdx = j + ii - 1
-                                if patternIdx < Int(spellingEndIndex) {
-                                    let currentChar = UInt32(chr(patternIdx)) |
-                                                     (typingWord[patternIdx] & VNEngine.TONEW_MASK) |
-                                                     (typingWord[patternIdx] & VNEngine.TONE_MASK)
-                                    if vowelPattern[ii] != currentChar {
-                                        spellingFlag = true
-                                        break
-                                    }
-                                }
-                                ii += 1
-                            }
-                            
-                            // Check if pattern matches and conditions are met
-                            let canHaveEndConsonant = vowelPattern[0] == 1
-                            let hasMoreChars = k < Int(spellingEndIndex)
-                            let nextCharIsConsonant = j + ii - 1 < Int(spellingEndIndex) &&
-                                                      vietnameseData.isConsonant(chr(j + ii - 1))
-                            
-                            if spellingFlag || (hasMoreChars && !canHaveEndConsonant) ||
-                               (j + ii - 1 < Int(spellingEndIndex) && !nextCharIsConsonant) {
-                                continue
-                            }
-                            
-                            spellingVowelOK = true
-                            break
-                        }
-                    }
-                } else if !vietnameseData.isConsonant(chr(j)) {
-                    spellingVowelOK = true
-                }
-                
-                // Check last consonant - MUST be inside "if k > j" block (OpenKey behavior)
-                for endConsonant in vietnameseData.endConsonantTable {
-                    var isMatch = true
-                    var jj = 0
-                    for keyInConsonant in endConsonant {
-                        if Int(spellingEndIndex) > k + jj {
-                            let currentKey = chr(k + jj)
-                            
-                            // Check if this end consonant entry requires quick end consonant
-                            let hasEndMask = (keyInConsonant & UInt16(VNEngine.END_CONSONANT_MASK)) != 0
-                            let baseKey = keyInConsonant & ~UInt16(VNEngine.END_CONSONANT_MASK)
-                            
-                            // Skip this entry if it has END_CONSONANT_MASK but vQuickEndConsonant is disabled
-                            if hasEndMask && vQuickEndConsonant != 1 {
-                                isMatch = false
-                                break
-                            }
-                            
-                            if baseKey != currentKey {
-                                isMatch = false
-                                break
-                            }
-                        }
-                        jj += 1
-                    }
-                    
-                    if !isMatch {
-                        continue
-                    }
-                    
-                    if k + jj >= Int(spellingEndIndex) {
-                        spellingOK = true
-                        break
-                    }
-                }
-                
-                // Limit: end consonant "ch", "t" cannot use with "~", "`", "?"
-                if spellingOK {
-                    if index >= 3 && chr(Int(index) - 1) == VietnameseData.KEY_H &&
-                       chr(Int(index) - 2) == VietnameseData.KEY_C {
-                        let mark = typingWord[Int(index) - 3] & VNEngine.MARK_MASK
-                        if !(mark == VNEngine.MARK1_MASK || mark == VNEngine.MARK5_MASK || mark == 0) {
-                            spellingOK = false
-                        }
-                    } else if index >= 2 && chr(Int(index) - 1) == VietnameseData.KEY_T {
-                        let mark = typingWord[Int(index) - 2] & VNEngine.MARK_MASK
-                        if !(mark == VNEngine.MARK1_MASK || mark == VNEngine.MARK5_MASK || mark == 0) {
-                            spellingOK = false
-                        }
-                    }
-                }
+            if VNDictionaryManager.shared.isDictionaryLoaded(style: style) {
+                dictionaryOK = isCurrentWordValid()
+                // Log is already in isCurrentWordValid()
+            } else {
+                logCallback?("checkSpelling: Dictionary not loaded, skipping check")
             }
         } else {
-            spellingOK = true
+            logCallback?("checkSpelling: Spell check disabled in settings")
         }
         
-        tempDisableKey = !(spellingOK && spellingVowelOK)
-        logCallback?("checkSpelling result: spellingOK=\(spellingOK), spellingVowelOK=\(spellingVowelOK), tempDisableKey=\(tempDisableKey)")
+        tempDisableKey = !dictionaryOK
+        logCallback?("checkSpelling result: dictionaryOK=\(dictionaryOK), tempDisableKey=\(tempDisableKey)")
     }
     
     func chr(_ idx: Int) -> UInt16 {
@@ -1739,6 +1603,7 @@ class VNEngine {
         
         if canModifyFlag {
             hookState.code = UInt8(vWillProcess)
+
         }
         hookState.backspaceCount = 0
         hookState.newCharCount = 0
@@ -1836,6 +1701,58 @@ class VNEngine {
         }
         hookState.newCharCount = hookState.backspaceCount
         logCallback?("  Result: backspaceCount=\(hookState.backspaceCount), newCharCount=\(hookState.newCharCount)")
+
+        // Dictionary check after adding mark - ONLY for instant restore feature
+        // When instant restore is OFF, we should NOT block typing here
+        // because the word is still being typed (e.g., "vịe" is incomplete, will become "việt")
+        // Dictionary validation will happen when user presses Space
+        // Hierarchy: instantRestore requires restoreIfWrongSpelling requires spellCheckEnabled
+        if SharedSettings.shared.spellCheckEnabled && 
+           SharedSettings.shared.restoreIfWrongSpelling &&
+           SharedSettings.shared.instantRestoreOnWrongSpelling &&
+           canModifyFlag {
+            let style: VNDictionaryManager.DictionaryStyle = SharedSettings.shared.modernStyle ? .dauMoi : .dauCu
+            if VNDictionaryManager.shared.isDictionaryLoaded(style: style) {
+                let wordWithMark = getCurrentWord()
+                let isValid = isCurrentWordValid()
+                logCallback?("  → Dictionary check after mark (instant restore): word='\(wordWithMark)', valid=\(isValid)")
+
+                // If word with mark is invalid and instant restore is enabled
+                if !isValid {
+                    logCallback?("  → Word invalid, INSTANT RESTORE enabled - restoring now!")
+                    
+                    // Perform immediate restore - restore to original keystrokes
+                    var originalWord = [UInt32]()
+                    for i in 0..<Int(stateIndex) {
+                        originalWord.append(keyStates[i])
+                    }
+                    
+                    if !originalWord.isEmpty {
+                        hookState.code = UInt8(vRestore)
+                        hookState.backspaceCount = Int(index)
+                        hookState.newCharCount = originalWord.count
+                        
+                        // Set original characters to send
+                        for i in 0..<originalWord.count {
+                            let keyData = originalWord[i]
+                            let keyCode = UInt16(keyData & VNEngine.CHAR_MASK)
+                            let isCaps = (keyData & VNEngine.CAPS_MASK) != 0
+                            
+                            var charCode = UInt32(keyCode)
+                            if isCaps {
+                                charCode |= VNEngine.CAPS_MASK
+                            }
+                            hookState.charData[originalWord.count - 1 - i] = charCode
+                        }
+                        
+                        logCallback?("  → Instant restore: bs=\(hookState.backspaceCount), chars=\(hookState.newCharCount)")
+                    }
+                    
+                    // Set tempDisableKey so subsequent keys don't get processed as Vietnamese
+                    tempDisableKey = true
+                }
+            }
+        }
     }
     
     // MARK: - Mark Position Rules (Modern Orthography)
@@ -2219,6 +2136,9 @@ class VNEngine {
     }
     
     func startNewSession() {
+        let prevIndex = index
+        let prevWord = prevIndex > 0 ? getCurrentWord() : ""
+        
         index = 0
         hookState.backspaceCount = 0
         hookState.newCharCount = 0
@@ -2228,6 +2148,13 @@ class VNEngine {
         hasHandledMacro = false
         hasHandleQuickConsonant = false
         longWordHelper.removeAll()
+        
+        // Clear typingWord array to prevent stale data (defensive measure)
+        for i in 0..<VNEngine.MAX_BUFF {
+            typingWord[i] = 0
+        }
+        
+        logCallback?("startNewSession: cleared buffer (prevIndex=\(prevIndex), prevWord='\(prevWord)')")
     }
     
     // MARK: - Character Code Conversion
@@ -2431,111 +2358,6 @@ class VNEngine {
     }
 }
 
-// MARK: - Advanced Features (Phase 5)
-// TODO: Implement MacroManager, SmartSwitchManager, ConvertTool
-/*
-extension VNEngine {
-    
-    // MARK: - Managers
-    
-    private static var macroManager = MacroManager()
-    private static var smartSwitchManager = SmartSwitchManager()
-    private static var convertTool = ConvertTool()
-    
-    // MARK: - Macro Support
-    
-    /// Add a macro
-    func addMacro(text: String, content: String) -> Bool {
-        return VNEngine.macroManager.addMacro(text: text, content: content)
-    }
-    
-    /// Delete a macro
-    func deleteMacro(text: String) -> Bool {
-        return VNEngine.macroManager.deleteMacro(text: text)
-    }
-    
-    /// Check if macro exists
-    func hasMacro(text: String) -> Bool {
-        return VNEngine.macroManager.hasMacro(text: text)
-    }
-    
-    /// Get all macros
-    func getAllMacros() -> [(key: [UInt32], text: String, content: String)] {
-        return VNEngine.macroManager.getAllMacros()
-    }
-    
-    /// Save macros to file
-    func saveMacrosToFile(path: String) -> Bool {
-        return VNEngine.macroManager.saveToFile(path: path)
-    }
-    
-    /// Load macros from file
-    func loadMacrosFromFile(path: String, append: Bool = true) -> Bool {
-        return VNEngine.macroManager.loadFromFile(path: path, append: append)
-    }
-    
-    /// Configure macro settings
-    func configureMacro(codeTable: Int, autoCapsMacro: Bool) {
-        VNEngine.macroManager.setCodeTable(codeTable)
-        VNEngine.macroManager.setAutoCapsMacro(autoCapsMacro)
-    }
-    
-    // MARK: - Smart Switch Key
-    
-    /// Get language for app
-    func getAppLanguage(bundleId: String, currentLanguage: Int) -> Int {
-        return VNEngine.smartSwitchManager.getAppLanguage(bundleId: bundleId, currentLanguage: currentLanguage)
-    }
-    
-    /// Set language for app
-    func setAppLanguage(bundleId: String, language: Int) {
-        VNEngine.smartSwitchManager.setAppLanguage(bundleId: bundleId, language: language)
-    }
-    
-    /// Get all app settings
-    func getAllAppLanguages() -> [(bundleId: String, language: Int)] {
-        return VNEngine.smartSwitchManager.getAllApps()
-    }
-    
-    /// Save smart switch data to file
-    func saveSmartSwitchToFile(path: String) -> Bool {
-        return VNEngine.smartSwitchManager.saveToFile(path: path)
-    }
-    
-    /// Load smart switch data from file
-    func loadSmartSwitchFromFile(path: String) -> Bool {
-        return VNEngine.smartSwitchManager.loadFromFile(path: path)
-    }
-    
-    // MARK: - Convert Tool
-    
-    /// Convert text with specified settings
-    func convertText(_ text: String, settings: ConvertSettings) -> String {
-        let tool = VNEngine.convertTool
-        tool.toAllCaps = settings.toAllCaps
-        tool.toAllNonCaps = settings.toAllNonCaps
-        tool.toCapsFirstLetter = settings.toCapsFirstLetter
-        tool.toCapsEachWord = settings.toCapsEachWord
-        tool.removeMark = settings.removeMark
-        tool.fromCode = settings.fromCode
-        tool.toCode = settings.toCode
-        
-        return tool.convert(text)
-    }
-    
-    /// Convert settings structure
-    struct ConvertSettings {
-        var toAllCaps = false
-        var toAllNonCaps = false
-        var toCapsFirstLetter = false
-        var toCapsEachWord = false
-        var removeMark = false
-        var fromCode: UInt8 = 0
-        var toCode: UInt8 = 0
-    }
-}
-*/
-
 // MARK: - Public API for KeyboardEventHandler Integration
 
 extension VNEngine {
@@ -2632,6 +2454,30 @@ extension VNEngine {
         // User needs to press space to trigger macro replacement
         let isSpace = (character == " ")
         
+        logCallback?("processWordBreak: char='\(character)', isSpace=\(isSpace), tempDisableKey=\(tempDisableKey), index=\(index)")
+        
+        // Check spelling before any other processing (for restore if wrong spelling feature)
+        // Only run if BOTH spell check AND restore if wrong spelling are enabled
+        if isSpace && vCheckSpelling == 1 && vRestoreIfWrongSpelling == 1 {
+            // Re-check spelling with full vowel check
+            if !tempDisableKey {
+                checkSpelling(forceCheckVowel: true)
+            }
+            
+            // If word is invalid (tempDisableKey = true), restore to original keystrokes
+            if tempDisableKey {
+                logCallback?("processWordBreak: Word invalid, attempting restore...")
+                if checkRestoreIfWrongSpelling(handleCode: vRestore) {
+                    logCallback?("processWordBreak: Restore successful, returning result")
+                    let result = convertHookStateToResult(hookState, currentKeyCode: nil, currentCharacter: character, isUppercase: false)
+                    // Reset after restore
+                    startNewSession()
+                    spaceCount = 1
+                    return result
+                }
+            }
+        }
+        
         // Check macro before resetting - ONLY for space
         if isSpace && shouldUseMacro() && !hasHandledMacro {
             let macroFound = findAndReplaceMacro()
@@ -2676,6 +2522,8 @@ extension VNEngine {
 
         // Save current word
         saveWord()
+        
+
 
         // Only reset session and clear macroKey for SPACE
         // For other special characters (!, @, #, etc.), we preserve macroKey

@@ -33,7 +33,6 @@ struct Preferences: Codable {
     var codeTable: CodeTable = .unicode
     var modernStyle: Bool = false
     var spellCheckEnabled: Bool = false
-    var englishDetectionEnabled: Bool = false  // Experimental: Skip Vietnamese processing for English words
     var fixAutocomplete: Bool = true
     
     // Advanced features
@@ -42,6 +41,7 @@ struct Preferences: Codable {
     var quickEndConsonantEnabled: Bool = false   // g→ng, h→nh, k→ch
     var upperCaseFirstChar: Bool = false         // Auto capitalize first letter
     var restoreIfWrongSpelling: Bool = true      // Restore if wrong spelling
+    var instantRestoreOnWrongSpelling: Bool = false // Restore immediately when wrong spelling detected
     var allowConsonantZFWJ: Bool = false         // Allow Z, F, W, J consonants
     var freeMarkEnabled: Bool = false            // Free mark placement (đặt dấu tự do)
     var tempOffSpellingEnabled: Bool = false     // Temp off spelling with Ctrl key

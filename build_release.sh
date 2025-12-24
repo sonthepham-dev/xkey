@@ -192,12 +192,14 @@ if [ "$ENABLE_CODESIGN" = true ]; then
     codesign --force --sign "$DEVELOPER_ID" \
         --timestamp \
         --options=runtime \
+        --entitlements "XKey/XKeyRelease.entitlements" \
         Release/XKey.app
     echo "✅ XKey.app re-signed"
 else
     # Ad-hoc sign with correct identifier (required for Accessibility permissions)
+    # IMPORTANT: Include entitlements to preserve App Group for data sharing
     echo "🔐 Ad-hoc signing with correct bundle identifier..."
-    codesign --force --sign - --identifier "$BUNDLE_ID" Release/XKey.app
+    codesign --force --sign - --identifier "$BUNDLE_ID" --entitlements "XKey/XKeyRelease.entitlements" Release/XKey.app
     echo "✅ Ad-hoc signed with identifier: $BUNDLE_ID"
 fi
 
@@ -284,10 +286,10 @@ if [ "$ENABLE_XKEYIM" = true ]; then
         # Re-sign after modifying Info.plist
         if [ "$ENABLE_CODESIGN" = true ]; then
             echo "🔐 Re-signing XKeyIM after Info.plist update..."
-            codesign --force --sign "$DEVELOPER_ID" --timestamp --options=runtime --entitlements "XKeyIM/XKeyIM.entitlements" "Release/XKeyIM.app"
+            codesign --force --sign "$DEVELOPER_ID" --timestamp --options=runtime --entitlements "XKeyIM/XKeyIMRelease.entitlements" "Release/XKeyIM.app"
         else
             echo "🔐 Ad-hoc signing XKeyIM with entitlements..."
-            codesign --force --sign - --identifier "$XKEYIM_BUNDLE_ID" --entitlements "XKeyIM/XKeyIM.entitlements" Release/XKeyIM.app
+            codesign --force --sign - --identifier "$XKEYIM_BUNDLE_ID" --entitlements "XKeyIM/XKeyIMRelease.entitlements" Release/XKeyIM.app
         fi
         
         # Verify signature
@@ -303,11 +305,12 @@ if [ "$ENABLE_XKEYIM" = true ]; then
             echo "✅ XKeyIM embedded in XKey.app"
 
             # Re-sign XKey.app after embedding XKeyIM (IMPORTANT: embedding modifies sealed resources)
+            # IMPORTANT: Must include --entitlements to preserve App Group for data sharing
             echo "🔐 Re-signing XKey.app after embedding XKeyIM..."
             if [ "$ENABLE_CODESIGN" = true ]; then
-                codesign --force --sign "$DEVELOPER_ID" --timestamp --options=runtime "Release/XKey.app"
+                codesign --force --sign "$DEVELOPER_ID" --timestamp --options=runtime --entitlements "XKey/XKeyRelease.entitlements" "Release/XKey.app"
             else
-                codesign --force --sign - --identifier "$BUNDLE_ID" "Release/XKey.app"
+                codesign --force --sign - --identifier "$BUNDLE_ID" --entitlements "XKey/XKeyRelease.entitlements" "Release/XKey.app"
             fi
 
             # Verify XKey.app signature after re-signing

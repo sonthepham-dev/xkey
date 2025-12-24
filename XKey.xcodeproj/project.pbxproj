@@ -37,6 +37,10 @@
 		1084A5462ED41EB200EA2D2A /* PreferencesViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1084A5442ED41EB200EA2D2A /* PreferencesViewModel.swift */; };
 		1084A5472ED41EB200EA2D2A /* PreferencesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1084A5432ED41EB200EA2D2A /* PreferencesView.swift */; };
 		1089F7ED2EF76F2300E833ED /* OverlayAppDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1089F7EB2EF76F2300E833ED /* OverlayAppDetector.swift */; };
+		1095C4D62EFB016B00C03826 /* VNDictionaryManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1095C4D52EFB016B00C03826 /* VNDictionaryManager.swift */; };
+		1095C4D72EFB016B00C03826 /* VNDictionaryManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1095C4D52EFB016B00C03826 /* VNDictionaryManager.swift */; };
+		1095C4DE2EFB02EA00C03826 /* VNEngineSpellCheck.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1095C4DD2EFB02EA00C03826 /* VNEngineSpellCheck.swift */; };
+		1095C4DF2EFB02EA00C03826 /* VNEngineSpellCheck.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1095C4DD2EFB02EA00C03826 /* VNEngineSpellCheck.swift */; };
 		1097C5E52EF6662500969052 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 1097C5E42EF6662500969052 /* Sparkle */; };
 		10A214992ED42DFA005B52BD /* HotkeyRecorderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10A214972ED42DFA005B52BD /* HotkeyRecorderView.swift */; };
 		10A2149A2ED42DFA005B52BD /* PreferencesWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10A214982ED42DFA005B52BD /* PreferencesWindowController.swift */; };
@@ -51,6 +55,7 @@
 		210B156FF24D4357FC34F023 /* AboutSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A414AFDC35C8357A998491D /* AboutSection.swift */; };
 		259D34BEC13552450AB30413 /* DebugLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51300ED94BA488E725A6605B /* DebugLogger.swift */; };
 		48B758BE0BDCAB95CFBADD3D /* VNEngineSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7801294053CCB45DE7232D2 /* VNEngineSettings.swift */; };
+		4CA5C6995A6B89E33A173709 /* LogFileReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D1AFFFF1204DAB29F3AAE19 /* LogFileReader.swift */; };
 		564995EF131811377C4F3FF6 /* VNEngineAdvanced.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F6BDFF6F99DC1B577BA425 /* VNEngineAdvanced.swift */; };
 		5A61FAA58A29AD3225DD649C /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 803B94EF161FE79A022FF806 /* SettingsView.swift */; };
 		5FEB1775ED6A86BD90EEE11F /* SettingsWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EAA0ED7079ABD1980FBFFAE /* SettingsWindowController.swift */; };
@@ -105,6 +110,8 @@
 		1084A5432ED41EB200EA2D2A /* PreferencesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreferencesView.swift; sourceTree = "<group>"; };
 		1084A5442ED41EB200EA2D2A /* PreferencesViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreferencesViewModel.swift; sourceTree = "<group>"; };
 		1089F7EB2EF76F2300E833ED /* OverlayAppDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayAppDetector.swift; sourceTree = "<group>"; };
+		1095C4D52EFB016B00C03826 /* VNDictionaryManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VNDictionaryManager.swift; sourceTree = "<group>"; };
+		1095C4DD2EFB02EA00C03826 /* VNEngineSpellCheck.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VNEngineSpellCheck.swift; sourceTree = "<group>"; };
 		10A214972ED42DFA005B52BD /* HotkeyRecorderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyRecorderView.swift; sourceTree = "<group>"; };
 		10A214982ED42DFA005B52BD /* PreferencesWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreferencesWindowController.swift; sourceTree = "<group>"; };
 		10F26F0A2ED6CAF900B9FA1F /* ConvertTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConvertTool.swift; sourceTree = "<group>"; };
@@ -114,6 +121,7 @@
 		10FA30B62EFA65B100C41BF8 /* SparkleUpdateDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SparkleUpdateDelegate.swift; sourceTree = "<group>"; };
 		10FDCC172EF5885200B2D9AC /* AppBehaviorDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppBehaviorDetector.swift; sourceTree = "<group>"; };
 		10FDCC1B2EF5942400B2D9AC /* InputSourceSwitcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InputSourceSwitcher.swift; sourceTree = "<group>"; };
+		1D1AFFFF1204DAB29F3AAE19 /* LogFileReader.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = LogFileReader.swift; sourceTree = "<group>"; };
 		2FB7B1CC880090240CFD79B3 /* ExcludedAppsSection.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ExcludedAppsSection.swift; sourceTree = "<group>"; };
 		3A3D9B46E4A73E69A837ADAD /* ConvertToolSection.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ConvertToolSection.swift; sourceTree = "<group>"; };
 		3E9E201050648938B3927D7A /* XKey/UI/WindowTitleRulesView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = XKey/UI/WindowTitleRulesView.swift; sourceTree = SOURCE_ROOT; };
@@ -305,6 +313,7 @@
 				EXCLUDEDAPPS002 /* ExcludedAppsView.swift */,
 				3E9E201050648938B3927D7A /* XKey/UI/WindowTitleRulesView.swift */,
 				0D7A4B3BFC35CF0327897BFD /* SettingsSections */,
+				1D1AFFFF1204DAB29F3AAE19 /* LogFileReader.swift */,
 			);
 			path = UI;
 			sourceTree = "<group>";
@@ -323,6 +332,8 @@
 		A5000009 /* Engine */ = {
 			isa = PBXGroup;
 			children = (
+				1095C4DD2EFB02EA00C03826 /* VNEngineSpellCheck.swift */,
+				1095C4D52EFB016B00C03826 /* VNDictionaryManager.swift */,
 				1045F4262EF91CBA00F735BE /* VNEngineEnglishDetection.swift */,
 				107602EC2EF4E3BA00ADC084 /* InputSourceManager.swift */,
 				10F26F0A2ED6CAF900B9FA1F /* ConvertTool.swift */,
@@ -446,6 +457,8 @@
 			files = (
 				100D2BD32EF2C1D800C26B87 /* ConvertTool.swift in Sources */,
 				100D2BD42EF2C1D800C26B87 /* VNEngineAdvanced.swift in Sources */,
+				1095C4D62EFB016B00C03826 /* VNDictionaryManager.swift in Sources */,
+				1095C4DE2EFB02EA00C03826 /* VNEngineSpellCheck.swift in Sources */,
 				100D2BD52EF2C1D800C26B87 /* VietnameseData.swift in Sources */,
 				100D2BD62EF2C1D800C26B87 /* VNEngineSmartSwitch.swift in Sources */,
 				1045F4272EF91CBA00F735BE /* VNEngineEnglishDetection.swift in Sources */,
@@ -494,6 +507,8 @@
 				106779A62ED41FD400FE0B24 /* StatusBarManager.swift in Sources */,
 				106779A72ED41FD400FE0B24 /* DebugWindowController.swift in Sources */,
 				A1000009 /* EventTapManager.swift in Sources */,
+				1095C4DF2EFB02EA00C03826 /* VNEngineSpellCheck.swift in Sources */,
+				1095C4D72EFB016B00C03826 /* VNDictionaryManager.swift in Sources */,
 				A100000A /* CharacterInjector.swift in Sources */,
 				A100000B /* KeyboardEventHandler.swift in Sources */,
 				101A44482ED419AE003F9D05 /* Preferences.swift in Sources */,
@@ -529,6 +544,7 @@
 				0EDDB1FED23FF95CF8BFA4AC /* InputSourcesSection.swift in Sources */,
 				E52C23534F4E3183B55BE6D0 /* ExcludedAppsSection.swift in Sources */,
 				81891108B8C7C600973DBBB2 /* SharedComponents.swift in Sources */,
+				4CA5C6995A6B89E33A173709 /* LogFileReader.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

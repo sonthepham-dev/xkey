@@ -16,7 +16,6 @@ extension VNEngine {
         var codeTable: CodeTable = .unicode
         var modernStyle: Bool = true
         var spellCheckEnabled: Bool = true
-        var englishDetectionEnabled: Bool = false  // Experimental: Skip Vietnamese processing for English words
         var fixAutocomplete: Bool = true
         var freeMarking: Bool = false
         
@@ -26,6 +25,7 @@ extension VNEngine {
         var quickEndConsonantEnabled: Bool = false
         var upperCaseFirstChar: Bool = false
         var restoreIfWrongSpelling: Bool = true
+
         var allowConsonantZFWJ: Bool = false
         var tempOffSpellingEnabled: Bool = false
         var tempOffEngineEnabled: Bool = false
@@ -60,7 +60,6 @@ extension VNEngine {
         vUseModernOrthography = settings.modernStyle ? 1 : 0
         vCheckSpelling = settings.spellCheckEnabled ? 1 : 0
         useSpellCheckingBefore = settings.spellCheckEnabled  // Sync internal state to prevent restoration to old value
-        vEnglishDetection = settings.englishDetectionEnabled ? 1 : 0
         vFixRecommendBrowser = settings.fixAutocomplete ? 1 : 0
         
         // Advanced features
@@ -69,6 +68,7 @@ extension VNEngine {
         vQuickEndConsonant = settings.quickEndConsonantEnabled ? 1 : 0
         vUpperCaseFirstChar = settings.upperCaseFirstChar ? 1 : 0
         vRestoreIfWrongSpelling = settings.restoreIfWrongSpelling ? 1 : 0
+
         vAllowConsonantZFWJ = settings.allowConsonantZFWJ ? 1 : 0
         vFreeMark = settings.freeMarking ? 1 : 0
         vTempOffSpelling = settings.tempOffSpellingEnabled ? 1 : 0
@@ -107,7 +107,6 @@ extension VNEngine {
         // Basic settings
         settings.modernStyle = vUseModernOrthography == 1
         settings.spellCheckEnabled = vCheckSpelling == 1
-        settings.englishDetectionEnabled = vEnglishDetection == 1
         settings.fixAutocomplete = vFixRecommendBrowser == 1
         
         // Advanced features
@@ -116,6 +115,7 @@ extension VNEngine {
         settings.quickEndConsonantEnabled = vQuickEndConsonant == 1
         settings.upperCaseFirstChar = vUpperCaseFirstChar == 1
         settings.restoreIfWrongSpelling = vRestoreIfWrongSpelling == 1
+
         settings.allowConsonantZFWJ = vAllowConsonantZFWJ == 1
         settings.freeMarking = vFreeMark == 1
         settings.tempOffSpellingEnabled = vTempOffSpelling == 1

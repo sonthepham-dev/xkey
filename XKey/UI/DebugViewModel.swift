@@ -2,7 +2,8 @@
 //  DebugViewModel.swift
 //  XKey
 //
-//  ViewModel for Debug Window - Optimized for high-frequency logging
+//  ViewModel for Debug Window - Optimized with file-based log reading
+//  Logs are written directly to file, Debug Window reads from file periodically
 //
 
 import SwiftUI
@@ -10,7 +11,7 @@ import Combine
 
 class DebugViewModel: ObservableObject {
     @Published var statusText = "Status: Initializing..."
-    @Published var logText = ""
+    @Published var logLines: [String] = []  // Changed from logText to array for better performance
     @Published var isLoggingEnabled = true
     @Published var isVerboseLogging = false {
         didSet {
@@ -24,27 +25,32 @@ class DebugViewModel: ObservableObject {
         }
     }
     
-    // MARK: - Optimization Properties
+    // MARK: - File-Based Logging Properties
     
-    /// Background queue for log processing
-    private let logQueue = DispatchQueue(label: "com.xkey.debuglog", qos: .utility)
+    /// Log file URL
+    let logFileURL: URL
     
-    /// Buffer for pending log entries
-    private var pendingLogs: [String] = []
+    /// Log file reader for incremental reads
+    private let logReader: LogFileReader
     
-    /// Lock for thread-safe access to pendingLogs
-    private let logLock = NSLock()
+    /// Background queue for file writes (fire-and-forget)
+    private let writeQueue = DispatchQueue(label: "com.xkey.debuglog.write", qos: .utility)
     
-    /// Timer for batched UI updates
-    private var updateTimer: Timer?
+    /// Timer for reading new log entries from file
+    private var readTimer: Timer?
     
-    /// Update interval in seconds (10 updates per second max)
-    private let updateInterval: TimeInterval = 0.1
+    /// Read interval - how often to check for new logs (500ms is a good balance)
+    private let readInterval: TimeInterval = 0.5
     
-    /// Log entries for efficient storage
-    private var logEntries: [String] = []
+    /// Maximum lines to keep in memory
+    private let maxDisplayLines = 1000
     
-    private let logFileURL: URL
+    /// Lock for file write operations
+    private let writeLock = NSLock()
+    
+    /// Track if window is visible (skip reading when hidden)
+    @Published var isWindowVisible = true
+    
     private var cancellables = Set<AnyCancellable>()
     
     // Callbacks
@@ -52,100 +58,125 @@ class DebugViewModel: ObservableObject {
     var alwaysOnTopCallback: ((Bool) -> Void)?
     var verboseLoggingCallback: ((Bool) -> Void)?
     
+    // MARK: - Computed Properties
+    
+    /// Combined log text for display (computed from lines)
+    var logText: String {
+        logLines.joined(separator: "\n")
+    }
+    
+    // MARK: - Initialization
+    
     init() {
         // Create log file in user's home directory
         let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
         logFileURL = homeDirectory.appendingPathComponent("XKey_Debug.log")
-
-        // Initialize log file with timestamp
-        let timestamp = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .medium)
-        let header = "=== XKey Debug Log ===\nStarted: \(timestamp)\nLog file: \(logFileURL.path)\n\n"
-        try? header.write(to: logFileURL, atomically: true, encoding: .utf8)
-
-        // Start the batched update timer
-        startUpdateTimer()
         
-        logMessage("Debug window initialized")
-        logMessage("Log file location: \(logFileURL.path)")
+        // Initialize log reader
+        logReader = LogFileReader(fileURL: logFileURL, maxLines: maxDisplayLines)
 
+        // Initialize log file with timestamp header
+        initializeLogFile()
+        
+        // Load existing log content
+        loadExistingLogs()
+        
+        // Start the periodic log reader
+        startReadTimer()
+        
         // Listen for debug logs from XKeyIM
         setupIMKitDebugListener()
     }
     
     deinit {
-        updateTimer?.invalidate()
+        readTimer?.invalidate()
         DistributedNotificationCenter.default().removeObserver(self)
     }
     
-    // MARK: - Optimized Logging
+    // MARK: - Log File Initialization
     
-    /// Add a log event (thread-safe, non-blocking)
+    private func initializeLogFile() {
+        let timestamp = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .medium)
+        let header = "=== XKey Debug Log ===\nStarted: \(timestamp)\nLog file: \(logFileURL.path)\n\n"
+        
+        // Create/overwrite file with header
+        try? header.write(to: logFileURL, atomically: true, encoding: .utf8)
+        
+        writeToFileAsync("Debug window initialized")
+        writeToFileAsync("Using file-based logging for better performance")
+    }
+    
+    private func loadExistingLogs() {
+        logReader.readAllLines { [weak self] lines in
+            self?.logLines = lines
+        }
+    }
+    
+    // MARK: - Fire-and-Forget Logging (Write Only)
+    
+    /// Add a log event - writes directly to file, no UI blocking
     func logEvent(_ event: String) {
         guard isLoggingEnabled else { return }
         
         let timestamp = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium)
         let logLine = "[\(timestamp)] \(event)"
         
-        // Add to pending buffer (thread-safe)
-        logLock.lock()
-        pendingLogs.append(logLine)
-        logLock.unlock()
-        
-        // Write to file asynchronously
-        logQueue.async { [weak self] in
-            self?.writeToFile(logLine + "\n")
+        // Write to file asynchronously (fire-and-forget)
+        writeToFileAsync(logLine)
+    }
+    
+    /// Write to file asynchronously (non-blocking)
+    private func writeToFileAsync(_ text: String) {
+        writeQueue.async { [weak self] in
+            self?.writeToFileSync(text + "\n")
         }
     }
     
-    /// Start timer for batched UI updates
-    private func startUpdateTimer() {
-        updateTimer = Timer.scheduledTimer(withTimeInterval: updateInterval, repeats: true) { [weak self] _ in
-            self?.flushPendingLogs()
+    /// Write to file synchronously (called from background queue)
+    private func writeToFileSync(_ text: String) {
+        writeLock.lock()
+        defer { writeLock.unlock() }
+        
+        guard let data = text.data(using: .utf8) else { return }
+        
+        do {
+            let handle = try FileHandle(forWritingTo: logFileURL)
+            handle.seekToEndOfFile()
+            handle.write(data)
+            try handle.close()
+        } catch {
+            // Ignore write errors to avoid blocking
         }
     }
     
-    /// Flush pending logs to UI (called periodically)
-    private func flushPendingLogs() {
-        logLock.lock()
-        let logsToFlush = pendingLogs
-        pendingLogs.removeAll()
-        logLock.unlock()
+    // MARK: - Periodic Log Reading (Read from File)
+    
+    /// Start timer for periodic log file reading
+    private func startReadTimer() {
+        readTimer = Timer.scheduledTimer(withTimeInterval: readInterval, repeats: true) { [weak self] _ in
+            self?.readNewLogs()
+        }
+    }
+    
+    /// Read new log entries from file
+    private func readNewLogs() {
+        // Skip reading if window is not visible or logging is disabled
+        guard isWindowVisible && isLoggingEnabled else { return }
         
-        guard !logsToFlush.isEmpty else { return }
-        
-        // Update UI on main thread
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
+        logReader.readNewLines { [weak self] newLines in
+            guard let self = self, !newLines.isEmpty else { return }
             
-            // Add new entries (no limit)
-            self.logEntries.append(contentsOf: logsToFlush)
+            // Append new lines
+            self.logLines.append(contentsOf: newLines)
             
-            // Update the text (single UI update)
-            self.logText = self.logEntries.joined(separator: "\n")
+            // Trim to max lines
+            if self.logLines.count > self.maxDisplayLines {
+                let excess = self.logLines.count - self.maxDisplayLines
+                self.logLines.removeFirst(excess)
+            }
         }
     }
     
-    /// Write to log file asynchronously
-    private func writeToFile(_ text: String) {
-        guard let data = text.data(using: .utf8),
-              let handle = try? FileHandle(forWritingTo: logFileURL) else { return }
-        
-        handle.seekToEndOfFile()
-        handle.write(data)
-        try? handle.close()
-    }
-    
-    private func logMessage(_ message: String) {
-        guard isLoggingEnabled else { return }
-        
-        let timestamp = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .medium)
-        let logLine = "[\(timestamp)] \(message)\n"
-        
-        logQueue.async { [weak self] in
-            self?.writeToFile(logLine)
-        }
-    }
-
     // MARK: - IMKit Debug Listener
     
     private func setupIMKitDebugListener() {
@@ -177,7 +208,7 @@ class DebugViewModel: ObservableObject {
         DispatchQueue.main.async {
             self.statusText = "Status: \(status)"
         }
-        logMessage("STATUS: \(status)")
+        logEvent("STATUS: \(status)")
     }
     
     func logKeyEvent(character: Character, keyCode: UInt16, result: String) {
@@ -200,19 +231,22 @@ class DebugViewModel: ObservableObject {
     }
     
     func clearLogs() {
-        logLock.lock()
-        pendingLogs.removeAll()
-        logLock.unlock()
+        // Clear in-memory logs
+        logLines.removeAll()
         
-        logEntries.removeAll()
-        logText = ""
-        logMessage("=== Logs Cleared ===")
+        // Reset log reader
+        logReader.reset()
+        
+        // Reinitialize log file
+        initializeLogFile()
+        
+        updateStatus("Logs cleared")
     }
     
     func toggleLogging() {
         if isLoggingEnabled {
             updateStatus("Logging enabled")
-            logMessage("=== Logging Enabled ===")
+            logEvent("=== Logging Enabled ===")
         } else {
             updateStatus("Logging disabled")
         }
@@ -226,6 +260,18 @@ class DebugViewModel: ObservableObject {
     func openLogFile() {
         // Reveal log file in Finder
         NSWorkspace.shared.activateFileViewerSelecting([logFileURL])
-        logMessage("Opened log file in Finder")
+        logEvent("Opened log file in Finder")
+    }
+    
+    // MARK: - Window Visibility
+    
+    func windowDidBecomeVisible() {
+        isWindowVisible = true
+        // Force read when window becomes visible
+        readNewLogs()
+    }
+    
+    func windowDidBecomeHidden() {
+        isWindowVisible = false
     }
 }

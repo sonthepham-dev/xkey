@@ -26,7 +26,6 @@ enum SharedSettingsKey: String {
     case codeTable = "XKey.codeTable"
     case modernStyle = "XKey.modernStyle"
     case spellCheckEnabled = "XKey.spellCheckEnabled"
-    case englishDetectionEnabled = "XKey.englishDetectionEnabled"
     case fixAutocomplete = "XKey.fixAutocomplete"
 
     // Advanced settings
@@ -35,6 +34,8 @@ enum SharedSettingsKey: String {
     case quickEndConsonantEnabled = "XKey.quickEndConsonantEnabled"
     case upperCaseFirstChar = "XKey.upperCaseFirstChar"
     case restoreIfWrongSpelling = "XKey.restoreIfWrongSpelling"
+    case instantRestoreOnWrongSpelling = "XKey.instantRestoreOnWrongSpelling"
+
     case allowConsonantZFWJ = "XKey.allowConsonantZFWJ"
     case freeMarkEnabled = "XKey.freeMarkEnabled"
     case tempOffSpellingEnabled = "XKey.tempOffSpellingEnabled"
@@ -98,7 +99,6 @@ class SharedSettings {
         SharedSettingsKey.codeTable.rawValue: CodeTable.unicode.rawValue,
         SharedSettingsKey.modernStyle.rawValue: false,
         SharedSettingsKey.spellCheckEnabled.rawValue: false,
-        SharedSettingsKey.englishDetectionEnabled.rawValue: false,
         SharedSettingsKey.quickTelexEnabled.rawValue: false,
         SharedSettingsKey.restoreIfWrongSpelling.rawValue: true,
         SharedSettingsKey.freeMarkEnabled.rawValue: false,
@@ -278,14 +278,6 @@ class SharedSettings {
         }
     }
 
-    var englishDetectionEnabled: Bool {
-        get { readBool(forKey: SharedSettingsKey.englishDetectionEnabled.rawValue) }
-        set {
-            writeBool(newValue, forKey: SharedSettingsKey.englishDetectionEnabled.rawValue)
-            notifySettingsChanged()
-        }
-    }
-
     var fixAutocomplete: Bool {
         get { readBool(forKey: SharedSettingsKey.fixAutocomplete.rawValue) }
         set { writeBool(newValue, forKey: SharedSettingsKey.fixAutocomplete.rawValue) }
@@ -329,6 +321,16 @@ class SharedSettings {
             notifySettingsChanged()
         }
     }
+
+    var instantRestoreOnWrongSpelling: Bool {
+        get { readBool(forKey: SharedSettingsKey.instantRestoreOnWrongSpelling.rawValue) }
+        set {
+            writeBool(newValue, forKey: SharedSettingsKey.instantRestoreOnWrongSpelling.rawValue)
+            notifySettingsChanged()
+        }
+    }
+
+
 
     var allowConsonantZFWJ: Bool {
         get { readBool(forKey: SharedSettingsKey.allowConsonantZFWJ.rawValue) }
@@ -649,7 +651,6 @@ class SharedSettings {
         }
         prefs.modernStyle = modernStyle
         prefs.spellCheckEnabled = spellCheckEnabled
-        prefs.englishDetectionEnabled = englishDetectionEnabled
         prefs.fixAutocomplete = fixAutocomplete
 
         // Advanced settings
@@ -658,6 +659,8 @@ class SharedSettings {
         prefs.quickEndConsonantEnabled = quickEndConsonantEnabled
         prefs.upperCaseFirstChar = upperCaseFirstChar
         prefs.restoreIfWrongSpelling = restoreIfWrongSpelling
+        prefs.instantRestoreOnWrongSpelling = instantRestoreOnWrongSpelling
+
         prefs.allowConsonantZFWJ = allowConsonantZFWJ
         prefs.freeMarkEnabled = freeMarkEnabled
         prefs.tempOffSpellingEnabled = tempOffSpellingEnabled
@@ -727,7 +730,6 @@ class SharedSettings {
         codeTable = prefs.codeTable.rawValue
         modernStyle = prefs.modernStyle
         spellCheckEnabled = prefs.spellCheckEnabled
-        englishDetectionEnabled = prefs.englishDetectionEnabled
         fixAutocomplete = prefs.fixAutocomplete
 
         // Advanced settings
@@ -736,6 +738,8 @@ class SharedSettings {
         quickEndConsonantEnabled = prefs.quickEndConsonantEnabled
         upperCaseFirstChar = prefs.upperCaseFirstChar
         restoreIfWrongSpelling = prefs.restoreIfWrongSpelling
+        instantRestoreOnWrongSpelling = prefs.instantRestoreOnWrongSpelling
+
         allowConsonantZFWJ = prefs.allowConsonantZFWJ
         freeMarkEnabled = prefs.freeMarkEnabled
         tempOffSpellingEnabled = prefs.tempOffSpellingEnabled

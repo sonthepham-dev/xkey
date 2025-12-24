@@ -18,11 +18,15 @@ protocol DebugWindowControllerProtocol: AnyObject {
 
 /// Centralized debug logger that works in both XKey and XKeyIM
 /// Optimized for high-frequency logging without blocking
+/// Uses fire-and-forget file writing for zero-blocking logging
 class DebugLogger {
 
     /// Shared instance
     static let shared = DebugLogger()
 
+    /// Log file URL (shared with DebugViewModel)
+    private let logFileURL: URL
+    
     /// Reference to debug window controller (set by AppDelegate in XKey)
     /// Using protocol to avoid dependency on AppKit/UI code
     weak var debugWindowController: DebugWindowControllerProtocol? {
@@ -41,48 +45,69 @@ class DebugLogger {
     /// Whether logging is enabled
     var isLoggingEnabled: Bool = true
     
-    /// Background queue for async logging (XKeyIM only)
+    /// Background queue for async file writing
     private let logQueue = DispatchQueue(label: "com.xkey.logger", qos: .utility)
+    
+    /// Lock for thread-safe file writes
+    private let writeLock = NSLock()
 
-    private init() {}
+    private init() {
+        // Use same log file as DebugViewModel
+        let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
+        logFileURL = homeDirectory.appendingPathComponent("XKey_Debug.log")
+    }
+    
+    /// Write to file asynchronously (fire-and-forget)
+    private func writeToFile(_ text: String) {
+        logQueue.async { [weak self] in
+            guard let self = self else { return }
+            
+            self.writeLock.lock()
+            defer { self.writeLock.unlock() }
+            
+            let timestamp = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium)
+            let line = "[\(timestamp)] \(text)\n"
+            
+            guard let data = line.data(using: .utf8) else { return }
+            
+            do {
+                let handle = try FileHandle(forWritingTo: self.logFileURL)
+                handle.seekToEndOfFile()
+                handle.write(data)
+                try handle.close()
+            } catch {
+                // Ignore write errors - fire and forget
+            }
+        }
+    }
 
-    /// Log a message (non-blocking)
+    /// Log a message (non-blocking, fire-and-forget)
     /// - Parameters:
     ///   - message: The message to log
     ///   - source: The source component (e.g., "VNEngine", "MacroManager")
     ///   - level: Log level (info, warning, error)
     func log(_ message: String, source: String = "", level: LogLevel = .info) {
+        guard isLoggingEnabled else { return }
+        
         let prefix = level.emoji
         let fullMessage = source.isEmpty ? "\(prefix) \(message)" : "\(prefix) [\(source)] \(message)"
 
-        // Send to debug window if available (XKey)
-        // DebugViewModel handles its own threading/batching
-        if let debugWindow = debugWindowController, debugWindow.isLoggingEnabled {
-            debugWindow.logEvent(fullMessage)
-            return
-        }
-        
-        // For XKeyIM or when no debug window: use NSLog asynchronously
-        guard isLoggingEnabled else { return }
-        
-        // Check level before async dispatch to avoid unnecessary work
+        // Check level before writing
         switch level {
         case .error, .warning:
-            logQueue.async {
-                NSLog("%@", fullMessage)
-            }
+            // Always log errors and warnings
+            writeToFile(fullMessage)
         case .info, .success:
+            // Only log info/success in DEBUG mode
             #if DEBUG
-            logQueue.async {
-                NSLog("%@", fullMessage)
-            }
+            writeToFile(fullMessage)
             #endif
         case .debug:
+            // Only log debug if verbose mode is enabled
             #if DEBUG
-            if isVerboseLogging {
-                logQueue.async {
-                    NSLog("%@", fullMessage)
-                }
+            let verbose = debugWindowController?.isVerboseLogging ?? isVerboseLogging
+            if verbose {
+                writeToFile(fullMessage)
             }
             #endif
         }
