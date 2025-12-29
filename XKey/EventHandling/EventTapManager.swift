@@ -85,34 +85,60 @@ class EventTapManager {
         )
         debugLogCallback?("  📊 Event mask: \(eventMask)")
         
-        // Create event tap
-        debugLogCallback?("  🔧 Creating event tap...")
-        guard let tap = CGEvent.tapCreate(
-            tap: .cgSessionEventTap,
+        // Callback closure for event tap
+        let callback: CGEventTapCallBack = { proxy, type, event, refcon in
+            guard let refcon = refcon else {
+                return Unmanaged.passUnretained(event)
+            }
+
+            let manager = Unmanaged<EventTapManager>.fromOpaque(refcon).takeUnretainedValue()
+
+            // Call event callback with proxy and handle nil (consume event)
+            if let result = manager.eventCallback(proxy: proxy, type: type, event: event) {
+                return result
+            } else {
+                // Return nil to consume the event
+                return nil
+            }
+        }
+        
+        let userInfo = Unmanaged.passUnretained(self).toOpaque()
+        
+        // Create event tap - try HID level first, fallback to session
+        // HID level intercepts events BEFORE session level, providing better timing
+        // and avoiding keystroke "swallowing" issues in terminals
+        debugLogCallback?("  🔧 Creating event tap (trying HID level first)...")
+        var tap = CGEvent.tapCreate(
+            tap: .cghidEventTap,
             place: .headInsertEventTap,
             options: .defaultTap,
             eventsOfInterest: eventMask,
-            callback: { proxy, type, event, refcon in
-                guard let refcon = refcon else {
-                    return Unmanaged.passUnretained(event)
-                }
-
-                let manager = Unmanaged<EventTapManager>.fromOpaque(refcon).takeUnretainedValue()
-
-                // Call event callback with proxy and handle nil (consume event)
-                if let result = manager.eventCallback(proxy: proxy, type: type, event: event) {
-                    return result
-                } else {
-                    // Return nil to consume the event
-                    return nil
-                }
-            },
-            userInfo: Unmanaged.passUnretained(self).toOpaque()
-        ) else {
+            callback: callback,
+            userInfo: userInfo
+        )
+        
+        if tap != nil {
+            debugLogCallback?("  ✅ Event tap created at HID level")
+        } else {
+            // Fallback to session level
+            debugLogCallback?("  ⚠️ HID tap failed, trying session level...")
+            tap = CGEvent.tapCreate(
+                tap: .cgSessionEventTap,
+                place: .headInsertEventTap,
+                options: .defaultTap,
+                eventsOfInterest: eventMask,
+                callback: callback,
+                userInfo: userInfo
+            )
+            if tap != nil {
+                debugLogCallback?("  ✅ Event tap created at session level")
+            }
+        }
+        
+        guard let tap = tap else {
             debugLogCallback?("  ❌ Failed to create event tap!")
             throw EventTapError.creationFailed
         }
-        debugLogCallback?("  ✅ Event tap created")
         
         eventTap = tap
 
@@ -193,6 +219,16 @@ class EventTapManager {
         // IMPORTANT: If suspended (IMKit mode active), pass ALL events through
         // This allows IMKit to receive and handle keyboard events
         if isSuspended {
+            return Unmanaged.passUnretained(event)
+        }
+
+        // CRITICAL: Skip events injected by XKey itself
+        // This prevents re-processing of backspaces/text we inject, which causes
+        // race conditions and duplicate diacritics in terminal apps
+        if event.getIntegerValueField(.eventSourceUserData) == kXKeyEventMarker {
+            debugLogCallback?("  → Skipping XKey-injected event (marker detected)")
+            // Also print directly for debugging
+            debugLogCallback?("🛡️ MARKER SKIP: type=\(type.rawValue), keyCode=\(event.getIntegerValueField(.keyboardEventKeycode))")
             return Unmanaged.passUnretained(event)
         }
 

@@ -1046,14 +1046,15 @@ class VNEngine {
         let charDisplay = Self.keyCodeToChar(keyCode).map { " '\($0)'" } ?? ""
         logCallback?("insertKey: keyCode=\(keyCode)\(charDisplay), isCaps=\(isCaps), currentIndex=\(index)")
         
-        // IMPORTANT: If starting a new word (index was 0), reset cursorMovedSinceReset
-        // This ensures spell check works correctly when user clicks into a text field
-        // and starts typing a new word from scratch.
-        // The flag should only remain true when user is editing in the middle of an existing word.
-        if index == 0 && cursorMovedSinceReset {
-            cursorMovedSinceReset = false
-            logCallback?("insertKey: Reset cursorMovedSinceReset (starting new word)")
-        }
+        // IMPORTANT: Do NOT reset cursorMovedSinceReset here!
+        // The flag should remain true for the entire word if cursor was moved.
+        // This prevents incorrect restore when user:
+        // 1. Moves cursor to middle of word "hãy"
+        // 2. Deletes part of it (e.g., deletes "hãy")
+        // 3. Types partial word "ãy" + space
+        // Without this fix, engine would restore "ãy" to "axy" because it doesn't know
+        // the context of the original word "hãy".
+        // The flag will be reset only on word break (space) in processWordBreak.
         
         if index >= VNEngine.MAX_BUFF {
             longWordHelper.append(typingWord[0])
@@ -2686,6 +2687,10 @@ extension VNEngine {
         // Reset spell checking to original setting
         vCheckSpelling = useSpellCheckingBefore ? 1 : 0
         willTempOffEngine = false
+        
+        // Reset cursor moved flag after word break
+        // This allows restore logic to work normally for the next word
+        cursorMovedSinceReset = false
         
         return ProcessResult() // Empty result, no consumption
     }

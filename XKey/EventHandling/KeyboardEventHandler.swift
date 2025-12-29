@@ -647,15 +647,25 @@ class KeyboardEventHandler: EventTapManager.EventTapDelegate {
 
     // MARK: - Excluded Apps Check
     
+    /// Apps that should always pass through all keys (remote devices handle input)
+    private static let passthroughApps: Set<String> = [
+        "com.apple.ScreenContinuity"  // iPhone Mirroring - iOS device handles text input
+    ]
+    
     /// Check if the current frontmost app is in the excluded list
     private func isCurrentAppExcluded() -> Bool {
-        guard !excludedApps.isEmpty else { return false }
-        
         guard let frontmostApp = NSWorkspace.shared.frontmostApplication,
               let bundleId = frontmostApp.bundleIdentifier else {
             return false
         }
         
+        // Always exclude passthrough apps (iPhone Mirroring, etc.)
+        if Self.passthroughApps.contains(bundleId) {
+            return true
+        }
+        
+        // Check user-defined excluded apps
+        guard !excludedApps.isEmpty else { return false }
         return excludedApps.contains { $0.bundleIdentifier == bundleId }
     }
     

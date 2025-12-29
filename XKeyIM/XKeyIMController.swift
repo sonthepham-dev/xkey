@@ -13,9 +13,14 @@ import InputMethodKit
 /// This is the main class that handles keyboard input for the Input Method
 @objc(XKeyIMController)
 class XKeyIMController: IMKInputController {
-    
+
+    // MARK: - Static Properties
+
+    /// Flag to ensure pre-warming only runs once per process lifetime
+    private static var hasPreWarmed = false
+
     // MARK: - Properties
-    
+
     /// Vietnamese processing engine
     private var engine: VNEngine!
     
@@ -38,9 +43,16 @@ class XKeyIMController: IMKInputController {
     private var lastReloadTime: Date = .distantPast
 
     // MARK: - Initialization
-    
+
     override init!(server: IMKServer!, delegate: Any!, client inputClient: Any!) {
         super.init(server: server, delegate: delegate, client: inputClient)
+
+        // Pre-warm singletons on first controller creation to eliminate cold start lag
+        // This runs BEFORE any user input, so by the time user types, everything is ready
+        if !Self.hasPreWarmed {
+            Self.hasPreWarmed = true
+            preWarmSingletons()
+        }
 
         // Initialize engine
         engine = VNEngine()
@@ -286,12 +298,34 @@ class XKeyIMController: IMKInputController {
             // In both cases, we should NOT process word break with spell check
             // because it would restore/delete the autocompleted text
             if !composingText.isEmpty || currentWordLength > 0 {
-                // We have composing text or tracked word - process space as word break
                 let result = engine.processWordBreak(character: " ")
-                if result.shouldConsume {
+
+                // Check if this is a restore case (spell check failed, restore to original keystrokes)
+                // In this case, result.newCharacters contains the restored text (e.g., "tieesg")
+                // and result.backspaceCount > 0 indicates how many chars to delete
+                let isRestoreCase = result.shouldConsume && result.backspaceCount > 0
+
+                if isRestoreCase && settings.useMarkedText {
+                    // Restore case in marked text mode
+                    // Replace current marked text with restored text from result.newCharacters
+                    let restoredText = result.newCharacters.map { $0.unicode(codeTable: .unicode) }.joined()
+                    IMKitDebugger.shared.log("Space: Restore detected, replacing with '\(restoredText)' (marked text mode)", category: "SPACE")
+
+                    // Set the restored text as marked text, then commit
+                    setMarkedText(restoredText, client: client)
+                    commitComposition(client)
+
+                    engine.reset()
+                    currentWordLength = 0
+                    markedTextStartLocation = NSNotFound
+                    return true  // Consume Space - don't insert extra space after restore
+                } else if result.shouldConsume {
                     handleResult(result, client: client)
+                    commitComposition(client)
+                } else {
+                    commitComposition(client)
                 }
-                commitComposition(client)
+
                 engine.reset()
                 currentWordLength = 0
                 markedTextStartLocation = NSNotFound
@@ -368,7 +402,9 @@ class XKeyIMController: IMKInputController {
         if settings.useMarkedText {
             if result.shouldConsume {
                 // Engine processed the key
+                IMKitDebugger.shared.log("Calling handleResult...", category: "TIMING")
                 handleResult(result, client: client)
+                IMKitDebugger.shared.log("handleResult completed", category: "TIMING")
                 return true
             } else if character.isLetter {
                 // Engine didn't consume, but in marked text mode we need to mark ALL letters
@@ -410,41 +446,24 @@ class XKeyIMController: IMKInputController {
     
     /// Handle engine result
     private func handleResult(_ result: VNEngine.ProcessResult, client: IMKTextInput) {
-        // Detect app-specific behavior
-        let appBehavior = AppBehaviorDetector.shared.detectIMKitBehavior()
-        
-        // Determine whether to use marked text:
-        // 1. User preference (settings.useMarkedText)
-        // 2. Override if app has known issues and user wants direct mode
-        var useMarkedText = settings.useMarkedText
-        
-        // If app has marked text issues and user hasn't explicitly enabled marked text,
-        // prefer direct insertion for better compatibility
-        if appBehavior.hasMarkedTextIssues && !settings.useMarkedText {
-            useMarkedText = false
-            IMKitDebugger.shared.log("handleResult: App '\(appBehavior.description)' has marked text issues, using direct mode", category: "APP")
-        }
-        
+        // OPTIMIZATION: Use user's settings directly instead of detecting app behavior
+        // This eliminates Accessibility API calls that cause 3-5s lag when switching apps
+        // User can control marked text mode via XKey settings
+        let useMarkedText = settings.useMarkedText
+
         if useMarkedText {
             // Option 1: Marked text mode - RECOMMENDED
             // IMPORTANT: Use getCurrentWord() to get FULL word, not just delta
             // result.newCharacters only contains changed characters (e.g., "ư")
             // but we need the entire word (e.g., "thư")
             let fullWord = engine.getCurrentWord()
-            IMKitDebugger.shared.log("handleResult: fullWord='\(fullWord)' (marked text mode)", category: "RESULT")
             setMarkedText(fullWord, client: client)
-            
-            // Apply commit delay if needed for this app type
-            if appBehavior.commitDelay > 0 {
-                usleep(appBehavior.commitDelay)
-            }
         } else {
             // Option 2: Direct replacement mode
             // IMPORTANT: Also use getCurrentWord() to get FULL word!
             // result.newCharacters only contains delta (changed chars), not full word
             // Using delta would replace "thu" with just "ư" → lose "th"!
             let fullWord = engine.getCurrentWord()
-            IMKitDebugger.shared.log("handleResult: fullWord='\(fullWord)' (direct mode, app=\(appBehavior.description))", category: "RESULT")
             replaceTextDirect(newText: fullWord, client: client)
         }
     }
@@ -644,6 +663,39 @@ class XKeyIMController: IMKInputController {
         markedTextStartLocation = NSNotFound
         NSLog("XKeyIMController: Activated")
     }
+
+    /// Pre-warm lazy-loaded singletons to eliminate first-keystroke lag
+    /// NSSpellChecker MUST be initialized on main thread, so we do it synchronously
+    private func preWarmSingletons() {
+        let overallStart = CFAbsoluteTimeGetCurrent()
+        IMKitDebugger.shared.log("Starting pre-warm sequence...", category: "PREWARM")
+
+        // 1. Pre-warm SharedSettings first (reads plist)
+        var t0 = CFAbsoluteTimeGetCurrent()
+        _ = SharedSettings.shared.spellCheckEnabled
+        _ = SharedSettings.shared.modernStyle
+        IMKitDebugger.shared.log(String(format: "SharedSettings: %.1f ms", (CFAbsoluteTimeGetCurrent() - t0) * 1000), category: "PREWARM")
+
+        // 2. Pre-warm VNDictionaryManager - load dictionary into memory if available
+        t0 = CFAbsoluteTimeGetCurrent()
+        let dictionaryStyle: VNDictionaryManager.DictionaryStyle = SharedSettings.shared.modernStyle ? .dauMoi : .dauCu
+        VNDictionaryManager.shared.loadIfAvailable(style: dictionaryStyle)
+        IMKitDebugger.shared.log(String(format: "VNDictionaryManager: %.1f ms", (CFAbsoluteTimeGetCurrent() - t0) * 1000), category: "PREWARM")
+
+        // NOTE: AppBehaviorDetector is no longer pre-warmed because we don't use it in handleResult()
+        // User's settings.useMarkedText is used directly instead of auto-detecting app behavior
+        // This eliminates the 3-5s Accessibility API lag when switching apps
+
+        // 3. Pre-warm NSSpellChecker (biggest lag source - loads language data)
+        // This MUST be done on main thread
+        t0 = CFAbsoluteTimeGetCurrent()
+        let spellChecker = NSSpellChecker.shared
+        _ = spellChecker.checkSpelling(of: "xin", startingAt: 0, language: "vi", wrap: false, inSpellDocumentWithTag: 0, wordCount: nil)
+        IMKitDebugger.shared.log(String(format: "NSSpellChecker: %.1f ms", (CFAbsoluteTimeGetCurrent() - t0) * 1000), category: "PREWARM")
+
+        let totalElapsed = (CFAbsoluteTimeGetCurrent() - overallStart) * 1000
+        IMKitDebugger.shared.log(String(format: "Total pre-warm time: %.1f ms", totalElapsed), category: "PREWARM")
+    }
     
     /// Called when input method is deactivated
     override func deactivateServer(_ sender: Any!) {
@@ -725,16 +777,27 @@ class XKeyIMController: IMKInputController {
         let menu = NSMenu()
         
         // Vietnamese toggle
-        let vnItem = NSMenuItem(
-            title: isVietnameseEnabled ? "✓ Tiếng Việt" : "Tiếng Việt",
-            action: #selector(toggleVietnamese),
+        // let vnItem = NSMenuItem(
+        //     title: isVietnameseEnabled ? "✓ Tiếng Việt" : "Tiếng Việt",
+        //     action: #selector(toggleVietnamese),
+        //     keyEquivalent: ""
+        // )
+        // vnItem.target = self
+        // menu.addItem(vnItem)
+        
+        // menu.addItem(NSMenuItem.separator())
+
+        // Version info
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
+        let versionItem = NSMenuItem(
+            title: "Phiên bản \(version) (\(build))",
+            action: nil,
             keyEquivalent: ""
         )
-        vnItem.target = self
-        menu.addItem(vnItem)
-        
-        menu.addItem(NSMenuItem.separator())
-        
+        versionItem.isEnabled = false
+        menu.addItem(versionItem)
+
         // Open XKey settings
         let settingsItem = NSMenuItem(
             title: "Mở XKey Settings...",
@@ -743,7 +806,7 @@ class XKeyIMController: IMKInputController {
         )
         settingsItem.target = self
         menu.addItem(settingsItem)
-        
+
         return menu
     }
     

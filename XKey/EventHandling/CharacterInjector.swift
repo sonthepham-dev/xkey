@@ -8,6 +8,11 @@
 import Cocoa
 import Carbon
 
+// MARK: - Event Marker
+// Used to identify events injected by XKey - prevents re-processing by event tap
+// This is critical for avoiding race conditions in terminal apps
+let kXKeyEventMarker: Int64 = 0x584B4559  // "XKEY" in hex
+
 // MARK: - Injection Method
 // NOTE: InjectionMethod, InjectionDelays, and InjectionMethodInfo are defined in
 // Shared/AppBehaviorDetector.swift (Single Source of Truth)
@@ -86,10 +91,19 @@ class CharacterInjector {
         injectionSemaphore.wait()
         defer { injectionSemaphore.signal() }
         
+        // Create NEW event source for each injection
+        // This ensures each injection has independent state, avoiding potential race conditions
+        eventSource = CGEventSource(stateID: .privateState)
+        
         let methodInfo = detectInjectionMethod()
         let method = methodInfo.method
         let delays = methodInfo.delays
         let textSendingMethod = methodInfo.textSendingMethod
+        
+        // For slow method (terminals), use direct post and use post(tap: .cgSessionEventTap) without proxy for injectViaBackspace
+        // With HID level event tap, new event source per injection, and proper markers,
+        // direct post should work correctly now
+        let useDirectPost = (method == .slow)
 
         // Build preview of characters to inject
         let charPreview = characters.map { $0.unicode(codeTable: codeTable) }.joined()
@@ -110,18 +124,22 @@ class CharacterInjector {
                 injectViaAutocompleteInternal(count: backspaceCount, delays: delays, proxy: proxy)
                 
             case .slow, .fast:
-                debugCallback?("    → Backspace method: delays=\(delays)")
+                debugCallback?("    → Backspace method: delays=\(delays), directPost=\(useDirectPost)")
                 if shouldFixAutocomplete {
                     sendForwardDelete(proxy: proxy)
                     usleep(3000)
                 }
+
+                // Send backspaces immediately, then waits AFTER all backspaces are sent
                 for i in 0..<backspaceCount {
-                    sendBackspaceKey(codeTable: codeTable, proxy: proxy)
+                    sendBackspaceKey(codeTable: codeTable, proxy: proxy, useDirectPost: useDirectPost)
                     usleep(delays.backspace)
                     debugCallback?("    → Backspace \(i + 1)/\(backspaceCount)")
                 }
+                // Wait after all backspaces
                 if backspaceCount > 0 {
                     usleep(delays.wait)
+                    debugCallback?("    → Post-backspace wait: \(delays.wait)µs")
                 }
             }
         }
@@ -138,11 +156,11 @@ class CharacterInjector {
             // Use text sending method from rule/detection
             switch textSendingMethod {
             case .oneByOne:
-                debugCallback?("    → Text mode: one-by-one")
-                sendTextOneByOneInternal(fullString, delay: delays.text, proxy: proxy)
+                debugCallback?("    → Text mode: one-by-one, directPost=\(useDirectPost)")
+                sendTextOneByOneInternal(fullString, delay: delays.text, proxy: proxy, useDirectPost: useDirectPost)
             case .chunked:
-                debugCallback?("    → Text mode: chunked")
-                sendTextChunkedInternal(fullString, delay: delays.text, proxy: proxy)
+                debugCallback?("    → Text mode: chunked, directPost=\(useDirectPost)")
+                sendTextChunkedInternal(fullString, delay: delays.text, proxy: proxy, useDirectPost: useDirectPost)
             }
         }
         
@@ -154,11 +172,11 @@ class CharacterInjector {
     }
     
     /// Internal: Send backspace key (no semaphore)
-    private func sendBackspaceKey(codeTable: CodeTable, proxy: CGEventTapProxy) {
+    private func sendBackspaceKey(codeTable: CodeTable, proxy: CGEventTapProxy, useDirectPost: Bool = false) {
         let deleteKeyCode: CGKeyCode = 0x33
         let backspaceCount = codeTable.requiresDoubleBackspace ? 2 : 1
         for _ in 0..<backspaceCount {
-            sendKeyPress(deleteKeyCode, proxy: proxy)
+            sendKeyPress(deleteKeyCode, proxy: proxy, useDirectPost: useDirectPost)
             usleep(1000)
         }
     }
@@ -190,14 +208,14 @@ class CharacterInjector {
     }
     
     /// Internal: Send text chunked (no semaphore)
-    private func sendTextChunkedInternal(_ text: String, delay: UInt32, proxy: CGEventTapProxy) {
+    private func sendTextChunkedInternal(_ text: String, delay: UInt32, proxy: CGEventTapProxy, useDirectPost: Bool = false) {
         guard let source = eventSource else { return }
         
         let utf16 = Array(text.utf16)
         var offset = 0
         let chunkSize = 20
         
-        debugCallback?("    → Sending text chunked: '\(text)' (\(utf16.count) UTF-16 units)")
+        debugCallback?("    → Sending text chunked: '\(text)' (\(utf16.count) UTF-16 units), direct=\(useDirectPost)")
         
         while offset < utf16.count {
             let end = min(offset + chunkSize, utf16.count)
@@ -211,8 +229,18 @@ class CharacterInjector {
             keyDown.keyboardSetUnicodeString(stringLength: chunk.count, unicodeString: &chunk)
             keyUp.keyboardSetUnicodeString(stringLength: chunk.count, unicodeString: &chunk)
             
-            keyDown.tapPostEvent(proxy)
-            keyUp.tapPostEvent(proxy)
+            // Mark as XKey-injected event to prevent re-processing by event tap
+            keyDown.setIntegerValueField(.eventSourceUserData, value: kXKeyEventMarker)
+            keyUp.setIntegerValueField(.eventSourceUserData, value: kXKeyEventMarker)
+            
+            // For slow method (terminals), post directly to session event tap
+            if useDirectPost {
+                keyDown.post(tap: .cgSessionEventTap)
+                keyUp.post(tap: .cgSessionEventTap)
+            } else {
+                keyDown.tapPostEvent(proxy)
+                keyUp.tapPostEvent(proxy)
+            }
             
             debugCallback?("    → Sent chunk [\(offset)..<\(end)]: \(chunk.count) chars")
             
@@ -226,10 +254,10 @@ class CharacterInjector {
     
     /// Internal: Send text one character at a time (for Safari/Google Docs compatibility)
     /// Some apps don't handle multiple Unicode characters in a single CGEvent properly
-    private func sendTextOneByOneInternal(_ text: String, delay: UInt32, proxy: CGEventTapProxy) {
+    private func sendTextOneByOneInternal(_ text: String, delay: UInt32, proxy: CGEventTapProxy, useDirectPost: Bool = false) {
         guard let source = eventSource else { return }
         
-        debugCallback?("    → Sending text one-by-one: '\(text)' (\(text.count) chars)")
+        debugCallback?("    → Sending text one-by-one: '\(text)' (\(text.count) chars), direct=\(useDirectPost)")
         
         for (index, char) in text.enumerated() {
             var utf16 = Array(String(char).utf16)
@@ -242,8 +270,18 @@ class CharacterInjector {
             keyDown.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: &utf16)
             keyUp.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: &utf16)
             
-            keyDown.tapPostEvent(proxy)
-            keyUp.tapPostEvent(proxy)
+            // Mark as XKey-injected event to prevent re-processing by event tap
+            keyDown.setIntegerValueField(.eventSourceUserData, value: kXKeyEventMarker)
+            keyUp.setIntegerValueField(.eventSourceUserData, value: kXKeyEventMarker)
+            
+            // For slow method (terminals), post directly to session event tap
+            if useDirectPost {
+                keyDown.post(tap: .cgSessionEventTap)
+                keyUp.post(tap: .cgSessionEventTap)
+            } else {
+                keyDown.tapPostEvent(proxy)
+                keyUp.tapPostEvent(proxy)
+            }
             
             debugCallback?("    → Sent char [\(index)]: '\(char)'")
             
@@ -503,6 +541,10 @@ class CharacterInjector {
             keyDown.keyboardSetUnicodeString(stringLength: chunk.count, unicodeString: &chunk)
             keyUp.keyboardSetUnicodeString(stringLength: chunk.count, unicodeString: &chunk)
             
+            // Mark as XKey-injected event to prevent re-processing by event tap
+            keyDown.setIntegerValueField(.eventSourceUserData, value: kXKeyEventMarker)
+            keyUp.setIntegerValueField(.eventSourceUserData, value: kXKeyEventMarker)
+            
             keyDown.tapPostEvent(proxy)
             keyUp.tapPostEvent(proxy)
             
@@ -534,6 +576,10 @@ class CharacterInjector {
             keyDown.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: &utf16)
             keyUp.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: &utf16)
             
+            // Mark as XKey-injected event to prevent re-processing by event tap
+            keyDown.setIntegerValueField(.eventSourceUserData, value: kXKeyEventMarker)
+            keyUp.setIntegerValueField(.eventSourceUserData, value: kXKeyEventMarker)
+            
             keyDown.tapPostEvent(proxy)
             keyUp.tapPostEvent(proxy)
             
@@ -561,17 +607,33 @@ class CharacterInjector {
         }
     }
 
-    private func sendKeyPress(_ keyCode: CGKeyCode, proxy: CGEventTapProxy) {
+    private func sendKeyPress(_ keyCode: CGKeyCode, proxy: CGEventTapProxy, useDirectPost: Bool = false) {
         guard let source = eventSource else { return }
 
         // Create key down event
         if let keyDown = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true) {
-            keyDown.tapPostEvent(proxy)
+            // Mark as XKey-injected event to prevent re-processing by event tap
+            keyDown.setIntegerValueField(.eventSourceUserData, value: kXKeyEventMarker)
+            
+            // For slow method (terminals), post directly to session event tap
+            // This avoids race conditions where tapPostEvent can cause timing issues
+            if useDirectPost {
+                keyDown.post(tap: .cgSessionEventTap)
+            } else {
+                keyDown.tapPostEvent(proxy)
+            }
         }
 
         // Create key up event
         if let keyUp = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false) {
-            keyUp.tapPostEvent(proxy)
+            // Mark as XKey-injected event to prevent re-processing by event tap
+            keyUp.setIntegerValueField(.eventSourceUserData, value: kXKeyEventMarker)
+            
+            if useDirectPost {
+                keyUp.post(tap: .cgSessionEventTap)
+            } else {
+                keyUp.tapPostEvent(proxy)
+            }
         }
     }
     
@@ -594,6 +656,10 @@ class CharacterInjector {
         keyDown.keyboardSetUnicodeString(stringLength: utf16Chars.count, unicodeString: &utf16Chars)
         keyUp.keyboardSetUnicodeString(stringLength: utf16Chars.count, unicodeString: &utf16Chars)
 
+        // Mark as XKey-injected event to prevent re-processing by event tap
+        keyDown.setIntegerValueField(.eventSourceUserData, value: kXKeyEventMarker)
+        keyUp.setIntegerValueField(.eventSourceUserData, value: kXKeyEventMarker)
+
         // Post events using tapPostEvent
         keyDown.tapPostEvent(proxy)
         keyUp.tapPostEvent(proxy)
@@ -611,6 +677,10 @@ class CharacterInjector {
               let keyUp = CGEvent(keyboardEventSource: source, virtualKey: rightArrowKeyCode, keyDown: false) else {
             return
         }
+        
+        // Mark as XKey-injected event to prevent re-processing by event tap
+        keyDown.setIntegerValueField(.eventSourceUserData, value: kXKeyEventMarker)
+        keyUp.setIntegerValueField(.eventSourceUserData, value: kXKeyEventMarker)
         
         keyDown.tapPostEvent(proxy)
         keyUp.tapPostEvent(proxy)
@@ -630,6 +700,10 @@ class CharacterInjector {
             return
         }
         
+        // Mark as XKey-injected event to prevent re-processing by event tap
+        keyDown.setIntegerValueField(.eventSourceUserData, value: kXKeyEventMarker)
+        keyUp.setIntegerValueField(.eventSourceUserData, value: kXKeyEventMarker)
+        
         keyDown.tapPostEvent(proxy)
         keyUp.tapPostEvent(proxy)
         
@@ -646,6 +720,10 @@ class CharacterInjector {
               let keyUp = CGEvent(keyboardEventSource: source, virtualKey: escapeKeyCode, keyDown: false) else {
             return
         }
+        
+        // Mark as XKey-injected event to prevent re-processing by event tap
+        keyDown.setIntegerValueField(.eventSourceUserData, value: kXKeyEventMarker)
+        keyUp.setIntegerValueField(.eventSourceUserData, value: kXKeyEventMarker)
         
         keyDown.tapPostEvent(proxy)
         keyUp.tapPostEvent(proxy)
@@ -668,6 +746,10 @@ class CharacterInjector {
         keyDown.keyboardSetUnicodeString(stringLength: 1, unicodeString: &chars)
         keyUp.keyboardSetUnicodeString(stringLength: 1, unicodeString: &chars)
 
+        // Mark as XKey-injected event to prevent re-processing by event tap
+        keyDown.setIntegerValueField(.eventSourceUserData, value: kXKeyEventMarker)
+        keyUp.setIntegerValueField(.eventSourceUserData, value: kXKeyEventMarker)
+
         keyDown.tapPostEvent(proxy)
         keyUp.tapPostEvent(proxy)
     }
@@ -686,6 +768,10 @@ class CharacterInjector {
         // Add Shift modifier
         keyDown.flags.insert(.maskShift)
         keyUp.flags.insert(.maskShift)
+
+        // Mark as XKey-injected event to prevent re-processing by event tap
+        keyDown.setIntegerValueField(.eventSourceUserData, value: kXKeyEventMarker)
+        keyUp.setIntegerValueField(.eventSourceUserData, value: kXKeyEventMarker)
 
         keyDown.tapPostEvent(proxy)
         keyUp.tapPostEvent(proxy)

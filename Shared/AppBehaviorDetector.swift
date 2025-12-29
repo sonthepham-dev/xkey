@@ -340,37 +340,39 @@ class AppBehaviorDetector {
     /// These have lower priority than custom rules
     static let builtInWindowTitleRules: [WindowTitleRule] = [
         // ============================================
-        // Safari-specific rules (higher delays needed)
+        // Google Workspace rules (all browsers)
         // ============================================
         
-        // Google Docs in Safari (needs higher delays)
+        // Google Docs (all browsers, English + Vietnamese UI)
+        // Matches: "Google Docs", "Google Tài liệu"
         WindowTitleRule(
-            name: "Google Docs (Safari)",
-            bundleIdPattern: "com.apple.Safari",
-            titlePattern: "Google Docs",
-            matchMode: .contains,
+            name: "Google Docs",
+            bundleIdPattern: "",  // Match all browsers
+            titlePattern: "Google (Docs|Tài liệu)",
+            matchMode: .regex,
             useMarkedText: false,
             hasMarkedTextIssues: true,
             commitDelay: 5000,
             injectionMethod: .slow,
             injectionDelays: [5000, 10000, 8000],
             textSendingMethod: .oneByOne,
-            description: "Google Docs in Safari - one-by-one text sending"
+            description: "Google Docs (all browsers) - one-by-one text sending"
         ),
         
-        // Google Sheets in Safari (needs higher delays)
+        // Google Sheets (all browsers, English + Vietnamese UI)
+        // Matches: "Google Sheets", "Google Trang tính"
         WindowTitleRule(
-            name: "Google Sheets (Safari)",
-            bundleIdPattern: "com.apple.Safari",
-            titlePattern: "Google Sheets",
-            matchMode: .contains,
+            name: "Google Sheets",
+            bundleIdPattern: "",  // Match all browsers
+            titlePattern: "Google (Sheets|Trang tính)",
+            matchMode: .regex,
             useMarkedText: false,
             hasMarkedTextIssues: true,
             commitDelay: 5000,
             injectionMethod: .slow,
             injectionDelays: [5000, 10000, 8000],
             textSendingMethod: .oneByOne,
-            description: "Google Sheets in Safari - one-by-one text sending"
+            description: "Google Sheets (all browsers) - one-by-one text sending"
         ),
         
         // ============================================
@@ -420,6 +422,44 @@ class AppBehaviorDetector {
             injectionDelays: [1000, 3000, 1000],
             textSendingMethod: .chunked,
             description: "Firefox Nightly - dùng autocomplete injection"
+        ),
+        
+        // ============================================
+        // Terminal rules
+        // ============================================
+        
+        // Warp Terminal - optimized delays for modern terminal
+        WindowTitleRule(
+            name: "Warp Terminal",
+            bundleIdPattern: "dev.warp.Warp-Stable",
+            titlePattern: "",  // Empty = match all windows
+            matchMode: .contains,
+            useMarkedText: true,
+            hasMarkedTextIssues: false,
+            commitDelay: 5000,
+            injectionMethod: .slow,
+            injectionDelays: [8000, 15000, 8000],
+            textSendingMethod: .chunked,
+            description: "Warp Terminal"
+        ),
+        
+        // ============================================
+        // Electron apps
+        // ============================================
+    
+        // Notion - needs higher delays for Monaco editor
+        WindowTitleRule(
+            name: "Notion",
+            bundleIdPattern: "notion.id",
+            titlePattern: "",
+            matchMode: .contains,
+            useMarkedText: true,
+            hasMarkedTextIssues: false,
+            commitDelay: 5000,
+            injectionMethod: .slow,
+            injectionDelays: [12000, 25000, 12000],
+            textSendingMethod: .chunked,
+            description: "Notion - Monaco editor needs higher delays"
         )
     ]
     
@@ -1074,8 +1114,8 @@ class AppBehaviorDetector {
         if Self.mediumTerminals.contains(bundleId) {
             return InjectionMethodInfo(
                 method: .slow,
-                delays: (3000, 6000, 3000),
-                textSendingMethod: .chunked,
+                delays: (12000, 30000, 6000),
+                textSendingMethod: .oneByOne,
                 description: "Medium Terminal"
             )
         }
