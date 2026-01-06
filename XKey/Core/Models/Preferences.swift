@@ -46,7 +46,8 @@ struct Preferences: Codable {
     var freeMarkEnabled: Bool = false            // Free mark placement (đặt dấu tự do)
     var tempOffToolbarEnabled: Bool = false      // Show floating toolbar for temp off controls
     var tempOffToolbarHotkey: Hotkey = Hotkey(keyCode: 0x11, modifiers: [.command, .option])  // Default: Cmd+Option+T
-    
+    var convertToolHotkey: Hotkey = Hotkey(keyCode: 0, modifiers: [])  // Default: disabled (no hotkey)
+
     // Macro settings
     var macroEnabled: Bool = false               // Enable text shortcuts
     var macroInEnglishMode: Bool = false         // Use macro in English mode

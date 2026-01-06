@@ -56,4 +56,11 @@ class ConvertToolViewModel: ObservableObject {
         pasteboard.clearContents()
         pasteboard.setString(outputText, forType: .string)
     }
+
+    func pasteFromClipboard() {
+        let pasteboard = NSPasteboard.general
+        if let text = pasteboard.string(forType: .string) {
+            inputText = text
+        }
+    }
 }

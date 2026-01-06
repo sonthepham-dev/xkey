@@ -9,17 +9,55 @@ import SwiftUI
 
 struct ConvertToolSection: View {
     @StateObject private var viewModel = ConvertToolViewModel()
-    
+    @StateObject private var prefsViewModel = PreferencesViewModel()
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
+                // Hotkey settings at the top
+                SettingsGroup(title: "Phím tắt") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("Phím tắt mở công cụ chuyển đổi:")
+                                .font(.caption)
+                            Spacer()
+                            HotkeyRecorderView(hotkey: $prefsViewModel.preferences.convertToolHotkey, minimumModifiers: 2)
+                                .frame(width: 150)
+                                .onChange(of: prefsViewModel.preferences.convertToolHotkey) { _ in
+                                    // Save immediately when hotkey changes
+                                    prefsViewModel.save()
+                                }
+                        }
+
+                        Text("Nhấn phím tắt này để mở nhanh công cụ chuyển đổi từ bất kỳ đâu")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+
                 // Input text
-                SettingsGroup(title: "Văn bản gốc") {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        Text("Văn bản gốc")
+                            .font(.headline)
+                            .foregroundColor(.primary)
+                        Spacer()
+                        Button(action: {
+                            viewModel.pasteFromClipboard()
+                        }) {
+                            Label("Dán từ clipboard", systemImage: "doc.on.clipboard")
+                        }
+                        .buttonStyle(.borderless)
+                    }
+
                     TextEditor(text: $viewModel.inputText)
                         .font(.body)
                         .frame(height: 100)
                         .border(Color.gray.opacity(0.2), width: 1)
                         .cornerRadius(4)
+                        .padding()
+                        .background(Color.gray.opacity(0.05))
+                        .cornerRadius(10)
                 }
                 
                 // Conversion options

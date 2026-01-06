@@ -127,6 +127,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Setup temp off toolbar
         setupTempOffToolbar()
 
+        // Setup convert tool hotkey
+        setupConvertToolHotkey()
+
         // Setup Sparkle auto-update
         setupSparkleUpdater()
 
@@ -1496,6 +1499,44 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// Toggle temp off toolbar programmatically
     func toggleTempOffToolbar() {
         TempOffToolbarController.shared.toggle()
+    }
+
+    // MARK: - Convert Tool Hotkey
+
+    private func setupConvertToolHotkey() {
+        // Setup notification observer for hotkey changes
+        NotificationCenter.default.addObserver(
+            forName: .convertToolHotkeyDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.updateConvertToolHotkey()
+        }
+
+        // Initial setup
+        updateConvertToolHotkey()
+    }
+
+    private func updateConvertToolHotkey() {
+        let preferences = SharedSettings.shared.loadPreferences()
+        let hotkey = preferences.convertToolHotkey
+
+        // If no keycode, disable hotkey
+        guard hotkey.keyCode != 0 else {
+            eventTapManager?.convertToolHotkey = nil
+            eventTapManager?.onConvertToolHotkey = nil
+            debugWindowController?.logEvent("Convert tool hotkey disabled (no key set)")
+            return
+        }
+
+        // Configure EventTapManager to handle convert tool hotkey
+        eventTapManager?.convertToolHotkey = hotkey
+        eventTapManager?.onConvertToolHotkey = { [weak self] in
+            self?.openConvertTool()
+            self?.debugWindowController?.logEvent("Convert tool opened via hotkey (\(hotkey.displayString))")
+        }
+
+        debugWindowController?.logEvent("Convert tool hotkey set: \(hotkey.displayString)")
     }
 }
 

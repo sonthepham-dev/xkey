@@ -41,6 +41,8 @@ enum SharedSettingsKey: String {
     case tempOffToolbarEnabled = "XKey.tempOffToolbarEnabled"
     case tempOffToolbarHotkeyCode = "XKey.tempOffToolbarHotkeyCode"
     case tempOffToolbarHotkeyModifiers = "XKey.tempOffToolbarHotkeyModifiers"
+    case convertToolHotkeyCode = "XKey.convertToolHotkeyCode"
+    case convertToolHotkeyModifiers = "XKey.convertToolHotkeyModifiers"
 
     // Macro settings
     case macroEnabled = "XKey.macroEnabled"
@@ -372,6 +374,31 @@ class SharedSettings {
             writeInt(Int(newValue), forKey: SharedSettingsKey.tempOffToolbarHotkeyModifiers.rawValue)
             notifyToolbarChanged()
         }
+    }
+
+    var convertToolHotkeyCode: UInt16 {
+        get { UInt16(readInt(forKey: SharedSettingsKey.convertToolHotkeyCode.rawValue)) }
+        set {
+            writeInt(Int(newValue), forKey: SharedSettingsKey.convertToolHotkeyCode.rawValue)
+            notifyConvertToolHotkeyChanged()
+        }
+    }
+
+    var convertToolHotkeyModifiers: UInt {
+        get { UInt(readInt(forKey: SharedSettingsKey.convertToolHotkeyModifiers.rawValue)) }
+        set {
+            writeInt(Int(newValue), forKey: SharedSettingsKey.convertToolHotkeyModifiers.rawValue)
+            notifyConvertToolHotkeyChanged()
+        }
+    }
+
+    /// Notify that convert tool hotkey has changed
+    private func notifyConvertToolHotkeyChanged() {
+        guard !isBatchUpdating else { return }
+        NotificationCenter.default.post(
+            name: .convertToolHotkeyDidChange,
+            object: nil
+        )
     }
 
     /// Notify that toolbar settings have changed
@@ -747,6 +774,16 @@ class SharedSettings {
             )
         }
 
+        // Convert tool hotkey
+        let convertHotkeyCode = convertToolHotkeyCode
+        let convertHotkeyModifiers = convertToolHotkeyModifiers
+        if convertHotkeyCode != 0 || convertHotkeyModifiers != 0 {
+            prefs.convertToolHotkey = Hotkey(
+                keyCode: convertHotkeyCode,
+                modifiers: ModifierFlags(rawValue: convertHotkeyModifiers)
+            )
+        }
+
         // Macro settings
         prefs.macroEnabled = macroEnabled
         prefs.macroInEnglishMode = macroInEnglishMode
@@ -827,6 +864,8 @@ class SharedSettings {
         tempOffToolbarEnabled = prefs.tempOffToolbarEnabled
         tempOffToolbarHotkeyCode = prefs.tempOffToolbarHotkey.keyCode
         tempOffToolbarHotkeyModifiers = prefs.tempOffToolbarHotkey.modifiers.rawValue
+        convertToolHotkeyCode = prefs.convertToolHotkey.keyCode
+        convertToolHotkeyModifiers = prefs.convertToolHotkey.modifiers.rawValue
 
         // Macro settings
         macroEnabled = prefs.macroEnabled
@@ -872,9 +911,12 @@ class SharedSettings {
 
         // Send ONE notification to notify observers
         notifySettingsChanged()
-        
+
         // Also notify toolbar settings changed (so toolbar can be enabled/disabled immediately)
         notifyToolbarChanged()
+
+        // Also notify convert tool hotkey changed
+        notifyConvertToolHotkeyChanged()
     }
 }
 
@@ -889,4 +931,7 @@ extension Notification.Name {
     
     /// Posted when temp off toolbar settings change (enabled/disabled or hotkey)
     static let tempOffToolbarSettingsDidChange = Notification.Name("XKey.tempOffToolbarSettingsDidChange")
+
+    /// Posted when convert tool hotkey changes
+    static let convertToolHotkeyDidChange = Notification.Name("XKey.convertToolHotkeyDidChange")
 }

@@ -28,7 +28,11 @@ class EventTapManager {
     // Toolbar hotkey configuration (for temp off toolbar)
     var toolbarHotkey: Hotkey?
     var onToolbarHotkey: (() -> Void)?
-    
+
+    // Convert tool hotkey configuration
+    var convertToolHotkey: Hotkey?
+    var onConvertToolHotkey: (() -> Void)?
+
     // Note: Undo typing key is handled by KeyboardEventHandler directly
     // because it needs to check engine state before deciding to consume the key
     
@@ -330,7 +334,22 @@ class EventTapManager {
                 return nil
             }
         }
-        
+
+        // Check for convert tool hotkey
+        // Skip if user is recording a new hotkey (so they can re-record the same hotkey)
+        if let hotkey = convertToolHotkey, type == .keyDown, !isHotkeyRecording {
+            let eventModifiers = ModifierFlags(from: event.flags)
+            if event.keyCode == hotkey.keyCode && eventModifiers == hotkey.modifiers {
+                debugLogCallback?("  → CONVERT TOOL HOTKEY DETECTED - consuming event")
+                // Call convert tool callback on main thread
+                DispatchQueue.main.async { [weak self] in
+                    self?.onConvertToolHotkey?()
+                }
+                // Consume the event completely - don't pass to other apps
+                return nil
+            }
+        }
+
         // Check for undo typing key (single key, no modifiers required)
         // This is handled by the delegate (KeyboardEventHandler) because it needs
         // to check if there's something to undo in the engine buffer first.
