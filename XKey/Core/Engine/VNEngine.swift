@@ -662,7 +662,8 @@ class VNEngine {
         var isCorrect = false
         var isChanged = false
         
-        logCallback?("handleMarkKey: keyCode=\(keyCode), index=\(index), buffer=\(getCurrentWord()), vFreeMark=\(vFreeMark)")
+        let charDisplay = Self.keyCodeToChar(keyCode).map { " '\($0)'" } ?? ""
+        logCallback?("handleMarkKey: keyCode=\(keyCode)\(charDisplay), index=\(index), buffer=\(getCurrentWord()), vFreeMark=\(vFreeMark)")
         
         // Ignore "qu" case - OpenKey: checkCorrectVowel
         if index >= 2 && chr(Int(index) - 1) == VietnameseData.KEY_U && chr(Int(index) - 2) == VietnameseData.KEY_Q {
@@ -818,7 +819,8 @@ class VNEngine {
     }
     
     private func handleVowelKey(keyCode: UInt16, isCaps: Bool) {
-        logCallback?("handleVowelKey: keyCode=\(keyCode), index=\(index), tempDisableKey=\(tempDisableKey), buffer=\(getCurrentWord()), vFreeMark=\(vFreeMark)")
+        let charDisplay = Self.keyCodeToChar(keyCode).map { " '\($0)'" } ?? ""
+        logCallback?("handleVowelKey: keyCode=\(keyCode)\(charDisplay), index=\(index), tempDisableKey=\(tempDisableKey), buffer=\(getCurrentWord()), vFreeMark=\(vFreeMark)")
         
         // Ignore "qu" case - OpenKey: checkCorrectVowel
         if index >= 2 && chr(Int(index) - 1) == VietnameseData.KEY_U && chr(Int(index) - 2) == VietnameseData.KEY_Q {
