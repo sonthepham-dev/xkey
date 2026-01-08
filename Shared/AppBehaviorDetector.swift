@@ -373,6 +373,48 @@ class AppBehaviorDetector {
     /// Force override delays (set by Injection Test)
     var forceDelays: InjectionDelays? = nil
     
+    // MARK: - Confirmed Injection Method
+    
+    /// Confirmed injection method (set when app is detected via mouse click or app switch)
+    /// When set, getConfirmedInjectionMethod() returns this instead of detecting every keystroke
+    /// This improves performance and avoids AX API timing issues
+    private var confirmedInjectionMethod: InjectionMethodInfo?
+    
+    /// Set confirmed injection method (call from mouse click handler or app switch)
+    /// - Parameter methodInfo: The injection method to use for subsequent keystrokes
+    func setConfirmedInjectionMethod(_ methodInfo: InjectionMethodInfo) {
+        confirmedInjectionMethod = methodInfo
+    }
+    
+    /// Get confirmed injection method, or detect if not set
+    /// - Returns: Confirmed method if available, otherwise detects fresh
+    func getConfirmedInjectionMethod() -> InjectionMethodInfo {
+        // Priority 0: Check force override (set by Injection Test)
+        if let forcedMethod = forceInjectionMethod {
+            let delays = forceDelays ?? getDefaultDelays(for: forcedMethod)
+            let textMethod = forceTextSendingMethod ?? .chunked
+            return InjectionMethodInfo(
+                method: forcedMethod,
+                delays: delays,
+                textSendingMethod: textMethod,
+                description: "Forced Override (\(forcedMethod.displayName))"
+            )
+        }
+        
+        // Priority 1: Use confirmed method if available
+        if let confirmed = confirmedInjectionMethod {
+            return confirmed
+        }
+        
+        // Priority 2: Fallback to live detection
+        return detectInjectionMethod()
+    }
+    
+    /// Clear confirmed injection method (call when context changes significantly)
+    func clearConfirmedInjectionMethod() {
+        confirmedInjectionMethod = nil
+    }
+    
     // MARK: - Cache (only for detect() which is used for UI display)
     // Note: detectInjectionMethod(), findMatchingRule(), and detectIMKitBehavior() 
     // don't use cache to ensure fresh detection on every keystroke
@@ -1389,61 +1431,8 @@ class AppBehaviorDetector {
         }
     }
 
-    private func getInjectionMethod(for bundleId: String, role: String?) -> InjectionMethodInfo {
-        
-        // Priority 0: Terminal panels in VSCode/Cursor/etc
-        // Check directly via AX Description - doesn't go through overlay detection
-        if isInTerminalPanel() {
-            return InjectionMethodInfo(
-                method: .slow,
-                delays: (3000, 6000, 3000),
-                textSendingMethod: .chunked,
-                description: "Terminal (VSCode/Cursor)"
-            )
-        }
-        
-        // Priority 1: Overlay launchers (Spotlight/Raycast/Alfred) - use autocomplete method
-        // MUST check this BEFORE AXComboBox/AXSearchField because Spotlight uses AXSearchField role
-        if let overlayName = overlayAppNameProvider?() {
-            return InjectionMethodInfo(
-                method: .autocomplete,
-                delays: (1000, 3000, 1000),
-                textSendingMethod: .chunked,
-                description: "\(overlayName) (Overlay Launcher)"
-            )
-        }
-        
-        // Priority 2: Fallback bundle ID check for Spotlight/Raycast/Alfred
-        // (in case overlay provider is not available)
-        if bundleId == "com.apple.Spotlight" {
-            return InjectionMethodInfo(
-                method: .autocomplete,
-                delays: (1000, 3000, 1000),
-                textSendingMethod: .chunked,
-                description: "Spotlight"
-            )
-        }
-        
-        if bundleId == "com.raycast.macos" {
-            return InjectionMethodInfo(
-                method: .autocomplete,
-                delays: (1000, 3000, 1000),
-                textSendingMethod: .chunked,
-                description: "Raycast"
-            )
-        }
-        
-        if bundleId.contains("com.runningwithcrayons.Alfred") {
-            return InjectionMethodInfo(
-                method: .autocomplete,
-                delays: (1000, 3000, 1000),
-                textSendingMethod: .chunked,
-                description: "Alfred"
-            )
-        }
-        
-        // Priority 3: Selection method for autocomplete UI elements (ComboBox, SearchField)
-        // Note: This comes AFTER Spotlight/Raycast/Alfred check to avoid conflict
+    private func getInjectionMethod(for bundleId: String, role: String?) -> InjectionMethodInfo {        
+        // Priority 1: Selection method for autocomplete UI elements (ComboBox, SearchField)
         if role == "AXComboBox" || role == "AXSearchField" {
             return InjectionMethodInfo(
                 method: .selection,
