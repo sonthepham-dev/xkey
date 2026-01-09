@@ -954,18 +954,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // Handle Smart Switch - auto switch language per app
             self.handleSmartSwitch(notification: notification)
             
-            // Detect and set confirmed injection method for the new app
-            // This ensures keystrokes use correct method immediately after app switch
-            let detector = AppBehaviorDetector.shared
-            let injectionInfo = detector.detectInjectionMethod()
-            detector.setConfirmedInjectionMethod(injectionInfo)
-
-            self.debugWindowController?.logEvent("App switched - engine reset, mid-sentence mode")
-            self.debugWindowController?.logEvent("   Injection: \(injectionInfo.method) (\(injectionInfo.description)) ✓ confirmed")
-            
-            // Apply Force Accessibility (AXManualAccessibility) if matching rule exists
-            // This enables enhanced accessibility for Electron/Chromium apps per Window Title Rules
+            // Apply Force Accessibility (AXManualAccessibility) FIRST if matching rule exists
+            // This MUST happen BEFORE detectInjectionMethod() because:
+            // 1. Force AX enables enhanced accessibility for Electron/Chromium apps
+            // 2. detectInjectionMethod() may need to read AX values
+            // 3. AX values won't be available without Force AX enabled first
             ForceAccessibilityManager.shared.applyForCurrentApp()
+            
+            // Small delay to allow AX tree to update after setting AXManualAccessibility
+            // Electron/Chromium apps need a moment to refresh their accessibility tree
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                guard let self = self else { return }
+                
+                // Detect and set confirmed injection method for the new app
+                // This ensures keystrokes use correct method immediately after app switch
+                let detector = AppBehaviorDetector.shared
+                let injectionInfo = detector.detectInjectionMethod()
+                detector.setConfirmedInjectionMethod(injectionInfo)
+
+                self.debugWindowController?.logEvent("App switched - engine reset, mid-sentence mode")
+                self.debugWindowController?.logEvent("   Injection: \(injectionInfo.method) (\(injectionInfo.description)) ✓ confirmed")
+            }
             
             // Reset intra-app focus tracking (new app = new baseline)
             self.lastFocusedElementSignature = ""
