@@ -154,6 +154,67 @@ enum WindowTitleMatchMode: String, Codable, CaseIterable {
     }
 }
 
+/// Result of merging all matching Window Title Rules
+/// Uses cascade logic: later rules override earlier rules (last non-nil value wins)
+/// This allows creating base rules with general settings and specific rules to override certain properties
+struct MergedRuleResult {
+    /// Names of all matched rules (for display/debugging)
+    var matchedRuleNames: [String] = []
+    
+    /// Whether to use marked text (nil = use default)
+    var useMarkedText: Bool?
+    
+    /// Whether this context has marked text issues (nil = use default)
+    var hasMarkedTextIssues: Bool?
+    
+    /// Commit delay in microseconds (nil = use default)
+    var commitDelay: UInt32?
+    
+    /// Injection method (nil = use default)
+    var injectionMethod: InjectionMethod?
+    
+    /// Injection delays [backspace, wait, text] (nil = use default)
+    var injectionDelays: [UInt32]?
+    
+    /// Text sending method (nil = use default/auto-detect)
+    var textSendingMethod: TextSendingMethod?
+    
+    /// Disable Vietnamese input for this context (nil = use default)
+    var disableVietnameseInput: Bool?
+    
+    /// Enable AXManualAccessibility for Electron/Chromium apps
+    var enableForceAccessibility: Bool?
+    
+    /// Combined description from all rules
+    var description: String?
+    
+    /// Whether any rules matched
+    var hasMatches: Bool {
+        return !matchedRuleNames.isEmpty
+    }
+    
+    /// Display name showing all matched rules
+    var displayName: String {
+        matchedRuleNames.joined(separator: " + ")
+    }
+    
+    /// Merge a rule into this result (later rules override earlier)
+    mutating func merge(from rule: WindowTitleRule) {
+        matchedRuleNames.append(rule.name)
+        
+        // Override with non-nil values from the rule
+        if let value = rule.useMarkedText { useMarkedText = value }
+        if let value = rule.hasMarkedTextIssues { hasMarkedTextIssues = value }
+        if let value = rule.commitDelay { commitDelay = value }
+        if let value = rule.injectionMethod { injectionMethod = value }
+        if let value = rule.injectionDelays { injectionDelays = value }
+        if let value = rule.textSendingMethod { textSendingMethod = value }
+        if let value = rule.disableVietnameseInput { disableVietnameseInput = value }
+        if let value = rule.enableForceAccessibility { enableForceAccessibility = value }
+        if let value = rule.description { description = value }
+    }
+}
+
 /// Rule for window title-based app behavior detection
 /// Allows combining bundle ID and window title to identify specific contexts
 /// (e.g., Google Docs opened in Safari vs regular Safari browsing)
@@ -198,6 +259,11 @@ struct WindowTitleRule: Codable, Identifiable {
     /// Override: Disable Vietnamese input for this context (nil = use default, true = disable, false = enable)
     /// When enabled, XKey will automatically disable Vietnamese typing when this rule matches
     let disableVietnameseInput: Bool?
+    
+    /// Override: Enable AXManualAccessibility for Electron/Chromium apps
+    /// When enabled, XKey will set AXManualAccessibility = true when this app is focused
+    /// This helps retrieve more detailed text info from Electron apps (VS Code, Slack, etc.)
+    let enableForceAccessibility: Bool?
     
     /// Description for debugging
     let description: String?
@@ -249,7 +315,7 @@ struct WindowTitleRule: Codable, Identifiable {
         case id, name, bundleIdPattern, titlePattern, matchMode, isEnabled
         case useMarkedText, hasMarkedTextIssues, commitDelay
         case injectionMethod, injectionDelays, textSendingMethod
-        case disableVietnameseInput, description
+        case disableVietnameseInput, enableForceAccessibility, description
     }
     
     init(from decoder: Decoder) throws {
@@ -266,6 +332,7 @@ struct WindowTitleRule: Codable, Identifiable {
         injectionDelays = try container.decodeIfPresent([UInt32].self, forKey: .injectionDelays)
         textSendingMethod = try container.decodeIfPresent(TextSendingMethod.self, forKey: .textSendingMethod)
         disableVietnameseInput = try container.decodeIfPresent(Bool.self, forKey: .disableVietnameseInput)
+        enableForceAccessibility = try container.decodeIfPresent(Bool.self, forKey: .enableForceAccessibility)
         description = try container.decodeIfPresent(String.self, forKey: .description)
         
         // Decode injection method from string
@@ -296,6 +363,7 @@ struct WindowTitleRule: Codable, Identifiable {
         try container.encodeIfPresent(injectionDelays, forKey: .injectionDelays)
         try container.encodeIfPresent(textSendingMethod, forKey: .textSendingMethod)
         try container.encodeIfPresent(disableVietnameseInput, forKey: .disableVietnameseInput)
+        try container.encodeIfPresent(enableForceAccessibility, forKey: .enableForceAccessibility)
         try container.encodeIfPresent(description, forKey: .description)
         
         // Encode injection method as string
@@ -327,6 +395,7 @@ struct WindowTitleRule: Codable, Identifiable {
         injectionDelays: [UInt32]? = nil,
         textSendingMethod: TextSendingMethod? = nil,
         disableVietnameseInput: Bool? = nil,
+        enableForceAccessibility: Bool? = nil,
         description: String? = nil
     ) {
         self.id = UUID()
@@ -342,6 +411,7 @@ struct WindowTitleRule: Codable, Identifiable {
         self.injectionDelays = injectionDelays
         self.textSendingMethod = textSendingMethod
         self.disableVietnameseInput = disableVietnameseInput
+        self.enableForceAccessibility = enableForceAccessibility
         self.description = description
     }
 }
@@ -727,13 +797,14 @@ class AppBehaviorDetector {
             return .standard
         }
         
-        // Priority 1: Check Window Title Rules for context-specific behavior
-        if let rule = findMatchingRule() {
+        // Priority 1: Check Window Title Rules for context-specific behavior (merged cascade)
+        let mergedResult = getMergedRuleResult()
+        if mergedResult.hasMatches {
             return IMKitBehavior(
-                useMarkedText: rule.useMarkedText ?? true,
-                hasMarkedTextIssues: rule.hasMarkedTextIssues ?? false,
-                commitDelay: rule.commitDelay ?? 0,
-                description: rule.name
+                useMarkedText: mergedResult.useMarkedText ?? true,
+                hasMarkedTextIssues: mergedResult.hasMarkedTextIssues ?? false,
+                commitDelay: mergedResult.commitDelay ?? 0,
+                description: mergedResult.displayName
             )
         }
         
@@ -992,22 +1063,82 @@ class AppBehaviorDetector {
         return nil
     }
     
+    /// Find ALL matching Window Title Rules for current context
+    /// Returns rules in application order: built-in rules first, then custom rules
+    /// Later rules can override earlier rules' properties (cascade behavior)
+    ///
+    /// Note: No caching is used here for same reasons as findMatchingRule()
+    func findAllMatchingRules() -> [WindowTitleRule] {
+        guard let bundleId = getCurrentBundleId() else {
+            return []
+        }
+        
+        // Always get fresh window title (no caching)
+        let windowTitle = getCurrentWindowTitle() ?? ""
+        
+        var matchingRules: [WindowTitleRule] = []
+        
+        // FIRST: Search in built-in rules (lower priority - applied first)
+        // This allows custom rules to override built-in rules
+        let disabledBuiltInRules = SharedSettings.shared.getDisabledBuiltInRules()
+        for rule in Self.builtInWindowTitleRules {
+            // Skip if rule is disabled in preferences
+            if disabledBuiltInRules.contains(rule.name) {
+                continue
+            }
+            if rule.matches(bundleId: bundleId, windowTitle: windowTitle) {
+                matchingRules.append(rule)
+            }
+        }
+        
+        // THEN: Search in custom rules (higher priority - can override)
+        // Custom rules are in user-defined order (can be reordered via drag & drop)
+        for rule in customRules where rule.isEnabled {
+            if rule.matches(bundleId: bundleId, windowTitle: windowTitle) {
+                matchingRules.append(rule)
+            }
+        }
+        
+        return matchingRules
+    }
+    
+    /// Get merged result from all matching rules
+    /// Uses cascade logic: later rules override earlier rules (last non-nil value wins)
+    /// 
+    /// Application order:
+    /// 1. Built-in rules (base settings)
+    /// 2. Custom rules in user-defined order (can override)
+    ///
+    /// This allows creating flexible configurations:
+    /// - A base rule setting injectionMethod for all Firefox windows
+    /// - A specific rule enabling Force Accessibility for specific websites
+    func getMergedRuleResult() -> MergedRuleResult {
+        let matchingRules = findAllMatchingRules()
+        
+        var result = MergedRuleResult()
+        for rule in matchingRules {
+            result.merge(from: rule)
+        }
+        
+        return result
+    }
+    
     /// Check if current context has a matching Window Title Rule
     func hasMatchingWindowTitleRule() -> Bool {
         return findMatchingRule() != nil
     }
     
-    /// Check if Vietnamese input is overridden by a matching rule
+    /// Check if Vietnamese input is overridden by matching rules (merged cascade)
     /// - Returns: A tuple (shouldOverride: Bool, disableVietnamese: Bool, ruleName: String?)
-    ///   - shouldOverride: true if a rule wants to override Vietnamese input state
+    ///   - shouldOverride: true if any rule wants to override Vietnamese input state
     ///   - disableVietnamese: true = disable Vietnamese, false = enable Vietnamese
-    ///   - ruleName: name of the matching rule for logging
+    ///   - ruleName: display name of all matched rules for logging
     func getVietnameseInputOverride() -> (shouldOverride: Bool, disableVietnamese: Bool, ruleName: String?) {
-        guard let rule = findMatchingRule(),
-              let disableVN = rule.disableVietnameseInput else {
+        let mergedResult = getMergedRuleResult()
+        guard let disableVN = mergedResult.disableVietnameseInput else {
             return (false, false, nil)
         }
-        return (true, disableVN, rule.name)
+        return (true, disableVN, mergedResult.displayName)
     }
     
     /// Check if Vietnamese input is overridden for a specific bundle ID
@@ -1016,29 +1147,46 @@ class AppBehaviorDetector {
     /// - Parameter bundleId: The bundle ID to check rules for
     /// - Returns: A tuple (shouldOverride: Bool, disableVietnamese: Bool, ruleName: String?)
     func getVietnameseInputOverrideForApp(bundleId: String) -> (shouldOverride: Bool, disableVietnamese: Bool, ruleName: String?) {
-        // Search in custom rules first (higher priority)
-        for rule in customRules where rule.isEnabled {
-            if rule.matches(bundleId: bundleId, windowTitle: "") {
-                if let disableVN = rule.disableVietnameseInput {
-                    return (true, disableVN, rule.name)
-                }
-            }
-        }
+        // Get all matching rules for this specific bundle ID
+        var mergedResult = MergedRuleResult()
         
-        // Then search in built-in rules
+        // FIRST: Built-in rules (lower priority)
         let disabledBuiltInRules = SharedSettings.shared.getDisabledBuiltInRules()
         for rule in Self.builtInWindowTitleRules {
             if disabledBuiltInRules.contains(rule.name) {
                 continue
             }
             if rule.matches(bundleId: bundleId, windowTitle: "") {
-                if let disableVN = rule.disableVietnameseInput {
-                    return (true, disableVN, rule.name)
-                }
+                mergedResult.merge(from: rule)
             }
         }
         
-        return (false, false, nil)
+        // THEN: Custom rules (higher priority - can override)
+        for rule in customRules where rule.isEnabled {
+            if rule.matches(bundleId: bundleId, windowTitle: "") {
+                mergedResult.merge(from: rule)
+            }
+        }
+        
+        guard let disableVN = mergedResult.disableVietnameseInput else {
+            return (false, false, nil)
+        }
+        return (true, disableVN, mergedResult.displayName)
+    }
+    
+    /// Check if Force Accessibility (AXManualAccessibility) is enabled by matching rules (merged cascade)
+    /// - Returns: A tuple (shouldEnable: Bool, ruleName: String?, bundleId: String?)
+    ///   - shouldEnable: true if any rule wants to enable AXManualAccessibility
+    ///   - ruleName: display name of all matched rules for logging
+    ///   - bundleId: bundle ID of the app to enable Force Accessibility for
+    func getForceAccessibilityOverride() -> (shouldEnable: Bool, ruleName: String?, bundleId: String?) {
+        let mergedResult = getMergedRuleResult()
+        guard mergedResult.enableForceAccessibility == true else {
+            return (false, nil, nil)
+        }
+        
+        let bundleId = getCurrentBundleId() ?? ""
+        return (true, mergedResult.displayName, bundleId)
     }
     
     /// Get current window title
@@ -1090,6 +1238,14 @@ class AppBehaviorDetector {
     /// Get all custom rules
     func getCustomRules() -> [WindowTitleRule] {
         return customRules
+    }
+    
+    /// Reorder custom rules (after drag & drop)
+    /// The new order determines the application priority (later rules override earlier)
+    func reorderCustomRules(_ newOrder: [WindowTitleRule]) {
+        customRules = newOrder
+        saveCustomRules()
+        clearCache()
     }
     
     /// Get all built-in rules with their enabled state from preferences
@@ -1315,22 +1471,11 @@ class AppBehaviorDetector {
 
         let currentRole = getFocusedElementRole()
 
-        // Priority 0.2: Terminal panels in VSCode/Cursor/etc
-        // Check directly via AX Description - doesn't go through overlay detection
-        if isInTerminalPanel() {
-            return InjectionMethodInfo(
-                method: .slow,
-                delays: (3000, 6000, 3000),
-                textSendingMethod: .chunked,
-                description: "Terminal (VSCode/Cursor)"
-            )
-        }
-
-        // Priority 0.3: Overlay launchers (Spotlight/Raycast/Alfred)
-        // MUST check this BEFORE browser address bar and Window Title Rules because:
+        // Priority 0.2: Overlay launchers (Spotlight/Raycast/Alfred) - HIGHEST CONTEXT PRIORITY
+        // MUST check this first because:
         // - Spotlight opens as overlay while Chrome may still be "frontmost app"
-        // - Window Title Rules (like Google Docs) would match first without this check
-        // - Spotlight/Raycast/Alfred need .autocomplete method
+        // - Window Title Rules (like Google Docs) should NOT match when typing in Spotlight
+        // - Overlay apps always need .autocomplete method
         if let overlayName = overlayAppNameProvider?() {
             return InjectionMethodInfo(
                 method: .autocomplete,
@@ -1340,8 +1485,8 @@ class AppBehaviorDetector {
             )
         }
 
-        // Priority 0.5: Check if focused element is browser address bar
-        // This takes precedence over Window Title Rules because:
+        // Priority 0.3: Check if focused element is browser address bar
+        // MUST check before Window Title Rules because:
         // - User might be in Google Docs tab (Window Title = "Google Docs")
         // - But clicked on address bar (focused element = Omnibox/AXTextField)
         // - Address bar needs different injection method than Google Docs content
@@ -1385,35 +1530,38 @@ class AppBehaviorDetector {
             }
         }
 
-        // Priority 1: Check Window Title Rules for context-specific injection method
-        if let rule = findMatchingRule(),
-           let injectionMethod = rule.injectionMethod {
+        // Priority 0.5: Window Title Rules (user rules can override terminal/app detection)
+        // This is AFTER overlay and address bar, but BEFORE terminal and bundle ID detection
+        // Allows users to customize injection for specific apps/contexts
+        let mergedResult = getMergedRuleResult()
+        if let injectionMethod = mergedResult.injectionMethod {
             let delays: InjectionDelays
-            if let d = rule.injectionDelays, d.count >= 3 {
+            if let d = mergedResult.injectionDelays, d.count >= 3 {
                 delays = (d[0], d[1], d[2])
             } else {
-                // Default delays based on method
-                switch injectionMethod {
-                case .fast: delays = (1000, 3000, 1500)
-                case .slow: delays = (3000, 6000, 3000)
-                case .selection: delays = (1000, 3000, 2000)
-                case .autocomplete: delays = (1000, 3000, 1000)
-                case .axDirect: delays = (1000, 3000, 2000)
-                }
+                delays = getDefaultDelays(for: injectionMethod)
             }
-
-            // Get text sending method from rule, default to chunked
-            let textMethod = rule.textSendingMethod ?? .chunked
-
+            let textMethod = mergedResult.textSendingMethod ?? .chunked
             return InjectionMethodInfo(
                 method: injectionMethod,
                 delays: delays,
                 textSendingMethod: textMethod,
-                description: rule.name
+                description: mergedResult.displayName
             )
         }
 
-        // Priority 2: Fall back to bundle ID based detection
+        // Priority 0.6: Terminal panels in VSCode/Cursor/etc
+        // Check directly via AX Description - doesn't go through overlay detection
+        if isInTerminalPanel() {
+            return InjectionMethodInfo(
+                method: .slow,
+                delays: (3000, 6000, 3000),
+                textSendingMethod: .chunked,
+                description: "Terminal (VSCode/Cursor)"
+            )
+        }
+
+        // Priority 1: Fall back to bundle ID based detection
         return getInjectionMethod(for: bundleId, role: currentRole)
     }
     
@@ -1605,12 +1753,14 @@ extension AppBehaviorDetector {
     
     /// Check if current context has an active Window Title Rule
     var hasActiveWindowTitleRule: Bool {
-        return findMatchingRule() != nil
+        return getMergedRuleResult().hasMatches
     }
     
-    /// Get the name of the active Window Title Rule, if any
+    /// Get the name of the active Window Title Rule(s), if any
+    /// Returns all matched rule names joined with " + "
     var activeWindowTitleRuleName: String? {
-        return findMatchingRule()?.name
+        let result = getMergedRuleResult()
+        return result.hasMatches ? result.displayName : nil
     }
     
     /// Get debug info for current detection state
@@ -1618,7 +1768,8 @@ extension AppBehaviorDetector {
         let bundleId = getCurrentBundleId() ?? "unknown"
         let windowTitle = getCachedWindowTitle()
         let role = getFocusedElementRole() ?? "unknown"
-        let matchedRule = findMatchingRule()
+        let mergedResult = getMergedRuleResult()
+        let allMatchingRules = findAllMatchingRules()
         let imkitBehavior = detectIMKitBehavior()
         let injectionInfo = detectInjectionMethod()
         
@@ -1630,12 +1781,29 @@ extension AppBehaviorDetector {
         
         """
         
-        if let rule = matchedRule {
+        if mergedResult.hasMatches {
             info += """
-            ✅ Matched Window Title Rule:
-               Name: \(rule.name)
-               Pattern: "\(rule.titlePattern)" (\(rule.matchMode.rawValue))
-               Description: \(rule.description ?? "-")
+            ✅ Matched Window Title Rules (\(allMatchingRules.count)):
+            """
+            for (index, rule) in allMatchingRules.enumerated() {
+                info += """
+                
+               [\(index + 1)] \(rule.name)
+                   Pattern: "\(rule.titlePattern)" (\(rule.matchMode.rawValue))
+                   Description: \(rule.description ?? "-")
+            """
+            }
+            info += """
+            
+            
+            📋 Merged Result:
+               useMarkedText: \(mergedResult.useMarkedText.map { String($0) } ?? "nil")
+               hasMarkedTextIssues: \(mergedResult.hasMarkedTextIssues.map { String($0) } ?? "nil")
+               commitDelay: \(mergedResult.commitDelay.map { String($0) } ?? "nil")
+               injectionMethod: \(mergedResult.injectionMethod?.rawValue ?? "nil")
+               textSendingMethod: \(mergedResult.textSendingMethod?.rawValue ?? "nil")
+               disableVietnameseInput: \(mergedResult.disableVietnameseInput.map { String($0) } ?? "nil")
+               enableForceAccessibility: \(mergedResult.enableForceAccessibility.map { String($0) } ?? "nil")
             
             """
         } else {

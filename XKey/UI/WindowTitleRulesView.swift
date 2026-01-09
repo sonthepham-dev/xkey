@@ -128,16 +128,32 @@ struct WindowTitleRulesView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 12)
                 } else {
-                    LazyVStack(spacing: 8) {
-                        ForEach(viewModel.customRules) { rule in
-                            RuleRowView(rule: rule, isBuiltIn: false) {
-                                editingRule = rule
-                            } onDelete: {
-                                viewModel.deleteRule(rule)
-                            } onToggle: { enabled in
-                                viewModel.toggleRule(rule, enabled: enabled)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("💡 Kéo thả để sắp xếp thứ tự. Rules phía dưới sẽ override rules phía trên.")
+                            .font(.caption2)
+                            .foregroundColor(.orange)
+                            .padding(.bottom, 4)
+                        
+                        List {
+                            ForEach(viewModel.customRules) { rule in
+                                RuleRowView(rule: rule, isBuiltIn: false) {
+                                    editingRule = rule
+                                } onDelete: {
+                                    viewModel.deleteRule(rule)
+                                } onToggle: { enabled in
+                                    viewModel.toggleRule(rule, enabled: enabled)
+                                }
+                                .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+                                .listRowBackground(Color.clear)
+                                .listRowSeparator(.hidden)
+                            }
+                            .onMove { source, destination in
+                                viewModel.moveRules(from: source, to: destination)
                             }
                         }
+                        .listStyle(.plain)
+                        .scrollContentBackground(.hidden)
+                        .frame(minHeight: max(80, CGFloat(viewModel.customRules.count) * 70), maxHeight: 400)
                     }
                 }
             }
@@ -274,6 +290,8 @@ struct WindowTitleRulesView: View {
                     injectionMethod: rule.injectionMethod,
                     injectionDelays: rule.injectionDelays,
                     textSendingMethod: rule.textSendingMethod,
+                    disableVietnameseInput: rule.disableVietnameseInput,
+                    enableForceAccessibility: rule.enableForceAccessibility,
                     description: rule.description
                 )
                 viewModel.addRule(newRule)
@@ -429,6 +447,7 @@ struct RuleRowView: View {
                     Text(rule.name)
                         .font(.subheadline)
                         .fontWeight(.medium)
+                        .lineLimit(1)
                     
                     if isBuiltIn {
                         Text("Mặc định")
@@ -455,31 +474,40 @@ struct RuleRowView: View {
                             .font(.caption2)
                             .foregroundColor(.secondary)
                             .fontWeight(.medium)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
                         Text("(\(rule.matchMode.rawValue))")
                             .font(.caption2)
                             .foregroundColor(.secondary)
+                            .fixedSize()
                     }
                 }
             }
+            .frame(minWidth: 150, maxWidth: 250, alignment: .leading)
             
             Spacer()
             
-            // Behavior badges
+            // Behavior badges - use fixedSize to prevent compression
             HStack(spacing: 4) {
                 // Vietnamese input control badge
                 if let disableVN = rule.disableVietnameseInput {
                     BehaviorBadge(text: disableVN ? "VN OFF" : "VN ON", color: disableVN ? .red : .green)
                 }
+                // Force Accessibility badge
+                if rule.enableForceAccessibility == true {
+                    BehaviorBadge(text: "AX", color: .indigo)
+                }
                 if rule.useMarkedText == false {
-                    BehaviorBadge(text: "No Mark", color: .orange)
+                    BehaviorBadge(text: "NoMark", color: .orange)
                 }
                 if let method = rule.injectionMethod {
                     BehaviorBadge(text: methodString(method), color: .purple)
                 }
                 if let textMethod = rule.textSendingMethod {
-                    BehaviorBadge(text: textMethod == .oneByOne ? "1-by-1" : "Chunk", color: .cyan)
+                    BehaviorBadge(text: textMethod == .oneByOne ? "1x1" : "Chunk", color: .cyan)
                 }
             }
+            .fixedSize(horizontal: true, vertical: false)
             
             // Toggle for both built-in and custom rules
             if let onToggle = onToggle {
@@ -583,6 +611,8 @@ struct BehaviorBadge: View {
     var body: some View {
         Text(text)
             .font(.caption2)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(color.opacity(0.15))
@@ -617,6 +647,7 @@ struct AddRuleSheet: View {
     @State private var textDelay: String = "1500"
     @State private var textSendingMethod: TextSendingMethod = .chunked
     @State private var disableVietnameseInput: Bool = false
+    @State private var enableForceAccessibility: Bool = false
     @State private var description: String = ""
     
     @State private var showError = false
@@ -703,6 +734,13 @@ struct AddRuleSheet: View {
                     Toggle("Tắt bộ gõ Tiếng Việt", isOn: $disableVietnameseInput)
                     
                     Text("Khi bật, bộ gõ Tiếng Việt sẽ tự động TẮT khi ứng dụng này được focus")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    
+                    // Force Accessibility for Electron/Chromium apps
+                    Toggle("Bật Force Accessibility (AXManualAccessibility)", isOn: $enableForceAccessibility)
+                    
+                    Text("Bật AXManualAccessibility cho ứng dụng Electron/Chromium (VS Code, Slack, Discord...) để lấy thông tin text chi tiết hơn")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                     
@@ -915,8 +953,9 @@ struct AddRuleSheet: View {
         if let textMethod = rule.textSendingMethod {
             textSendingMethod = textMethod
         }
-        // Simple toggle: just load the value (default false if nil)
+        // Simple toggles: just load the values (default false if nil)
         disableVietnameseInput = rule.disableVietnameseInput ?? false
+        enableForceAccessibility = rule.enableForceAccessibility ?? false
     }
     
     private func saveRule() {
@@ -948,6 +987,7 @@ struct AddRuleSheet: View {
             injectionDelays: injectionDelaysArray,
             textSendingMethod: overrideInjection ? textSendingMethod : nil,
             disableVietnameseInput: disableVietnameseInput ? true : nil,
+            enableForceAccessibility: enableForceAccessibility ? true : nil,
             description: description.isEmpty ? nil : description
         )
         
@@ -1045,7 +1085,7 @@ class WindowTitleRulesViewModel: ObservableObject {
                 currentAppName = NSWorkspace.shared.frontmostApplication?.localizedName ?? bundleId
                 currentBundleId = bundleId
                 currentWindowTitle = detector.getCachedWindowTitle()
-                matchedRuleName = detector.findMatchingRule()?.name
+                matchedRuleName = detector.getMergedRuleResult().hasMatches ? detector.getMergedRuleResult().displayName : nil
             }
         }
     }
@@ -1071,7 +1111,8 @@ class WindowTitleRulesViewModel: ObservableObject {
                 currentAppName = NSWorkspace.shared.frontmostApplication?.localizedName ?? bundleId
                 currentBundleId = bundleId
                 currentWindowTitle = detector.getCachedWindowTitle()
-                matchedRuleName = detector.findMatchingRule()?.name
+                let mergedResult = detector.getMergedRuleResult()
+                matchedRuleName = mergedResult.hasMatches ? mergedResult.displayName : nil
             }
             // If XKey, keep previous values (don't update)
         } else if currentAppName.isEmpty {
@@ -1114,5 +1155,13 @@ class WindowTitleRulesViewModel: ObservableObject {
     func toggleBuiltInRule(_ rule: WindowTitleRule, enabled: Bool) {
         AppBehaviorDetector.shared.toggleBuiltInRule(rule.name, enabled: enabled)
         refresh()
+    }
+    
+    /// Move rules from source indices to destination index (drag & drop reordering)
+    func moveRules(from source: IndexSet, to destination: Int) {
+        customRules.move(fromOffsets: source, toOffset: destination)
+        
+        // Save the new order to AppBehaviorDetector
+        AppBehaviorDetector.shared.reorderCustomRules(customRules)
     }
 }

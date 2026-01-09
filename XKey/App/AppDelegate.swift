@@ -320,6 +320,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 debugWindow.logEvent(message)
             }
         }
+        
+        // Setup ForceAccessibilityManager log callback
+        ForceAccessibilityManager.shared.logCallback = { [weak self] message in
+            self?.debugWindowController?.logEvent(message)
+        }
 
         // Check permission BEFORE trying to start event tap
         // This prevents macOS system dialog from appearing
@@ -957,6 +962,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
             self.debugWindowController?.logEvent("App switched - engine reset, mid-sentence mode")
             self.debugWindowController?.logEvent("   Injection: \(injectionInfo.method) (\(injectionInfo.description)) ✓ confirmed")
+            
+            // Apply Force Accessibility (AXManualAccessibility) if matching rule exists
+            // This enables enhanced accessibility for Electron/Chromium apps per Window Title Rules
+            ForceAccessibilityManager.shared.applyForCurrentApp()
             
             // Reset intra-app focus tracking (new app = new baseline)
             self.lastFocusedElementSignature = ""
