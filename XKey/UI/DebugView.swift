@@ -574,6 +574,104 @@ struct TextTestTabView: View {
                         
                         Divider()
                         
+                        // Force Accessibility Section (for Electron/Chromium apps)
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text("Force Accessibility")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundColor(.secondary)
+                                
+                                Spacer()
+                                
+                                // Status indicator
+                                if viewModel.isForceAccessibilityEnabled {
+                                    Circle()
+                                        .fill(Color.green)
+                                        .frame(width: 6, height: 6)
+                                }
+                            }
+                            
+                            // Show target app
+                            HStack(spacing: 4) {
+                                Text("Target:")
+                                    .font(.system(size: 9))
+                                    .foregroundColor(.secondary)
+                                Text(viewModel.forceAccessibilityTargetApp)
+                                    .font(.system(size: 9, weight: .medium))
+                                    .foregroundColor(.primary)
+                            }
+                            
+                            Text("Enable AXManualAccessibility for Electron/Chromium apps")
+                                .font(.system(size: 9))
+                                .foregroundColor(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            
+                            // Buttons
+                            HStack(spacing: 8) {
+                                // Toggle AXManualAccessibility
+                                Button {
+                                    viewModel.toggleForceAccessibility()
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: viewModel.isForceAccessibilityEnabled ? "checkmark.circle.fill" : "circle")
+                                            .font(.system(size: 10))
+                                        Text(viewModel.isForceAccessibilityEnabled ? "Enabled" : "Enable")
+                                            .font(.system(size: 10, weight: .medium))
+                                    }
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 4)
+                                            .fill(viewModel.isForceAccessibilityEnabled ? Color.green.opacity(0.15) : Color.blue.opacity(0.1))
+                                    )
+                                    .foregroundColor(viewModel.isForceAccessibilityEnabled ? .green : .blue)
+                                }
+                                .buttonStyle(.plain)
+                                .help("Toggle AXManualAccessibility for target app")
+                                
+                                // Check Status Button (more useful than forcing)
+                                Button {
+                                    viewModel.checkAccessibilityStatus()
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "magnifyingglass")
+                                            .font(.system(size: 10))
+                                        Text("Check")
+                                            .font(.system(size: 10, weight: .medium))
+                                    }
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 4)
+                                            .fill(Color.orange.opacity(0.1))
+                                    )
+                                    .foregroundColor(.orange)
+                                }
+                                .buttonStyle(.plain)
+                                .help("Check accessibility status of target app (see Log tab)")
+                            }
+                            
+                            // Status message
+                            if !viewModel.forceAccessibilityStatus.isEmpty {
+                                Text(viewModel.forceAccessibilityStatus)
+                                    .font(.system(size: 9))
+                                    .foregroundColor(viewModel.forceAccessibilityStatus.hasPrefix("✅") ? .green : 
+                                                    viewModel.forceAccessibilityStatus.hasPrefix("❌") ? .red : .secondary)
+                            }
+                        }
+                        .padding(10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color.blue.opacity(0.03))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(Color.blue.opacity(0.1), lineWidth: 1)
+                                )
+                        )
+                        
+                        Divider()
+
+                        
                         // Input Element Section
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Input Element")

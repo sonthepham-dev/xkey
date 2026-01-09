@@ -51,6 +51,24 @@ class DebugViewModel: ObservableObject {
     @Published var isMonitoringExternal = false
     private var externalMonitorTimer: Timer?
     
+    // MARK: - Force Accessibility Properties
+    /// Whether AXManualAccessibility is currently enabled for the focused app
+    @Published var isForceAccessibilityEnabled = false
+    /// Status message for force accessibility
+    @Published var forceAccessibilityStatus = ""
+    /// PID of the app that has force accessibility enabled
+    private var forceAccessibilityPid: pid_t = 0
+    /// Last external app PID (not XKey) - used for Force Accessibility targeting
+    private var lastExternalAppPid: pid_t = 0
+    /// Last external app name - for display purposes
+    private var lastExternalAppName: String = ""
+    /// Last external app bundle ID
+    private var lastExternalAppBundleID: String = ""
+    /// Public access to target app name for UI
+    var forceAccessibilityTargetApp: String {
+        lastExternalAppName.isEmpty ? "(none)" : lastExternalAppName
+    }
+    
     // MARK: - App Detector Test Properties
     @Published var isAppDetectorTestRunning = false
     @Published var appDetectorTestCountdown = 0
@@ -778,6 +796,16 @@ class DebugViewModel: ObservableObject {
         
         let appName = frontmostApp.localizedName ?? "Unknown"
         let bundleID = frontmostApp.bundleIdentifier ?? "Unknown"
+        let pid = frontmostApp.processIdentifier
+        
+        // Track external app (any app that's not XKey)
+        // This is used for Force Accessibility to target the correct app
+        let myBundleID = Bundle.main.bundleIdentifier ?? "com.xkey"
+        if bundleID != myBundleID {
+            lastExternalAppPid = pid
+            lastExternalAppName = appName
+            lastExternalAppBundleID = bundleID
+        }
         
         DispatchQueue.main.async {
             self.focusedAppName = appName
@@ -1031,6 +1059,226 @@ class DebugViewModel: ObservableObject {
         }
     }
     
+    // MARK: - Force Accessibility Methods
+    
+    /// Toggle force accessibility (AXManualAccessibility) for the currently focused app
+    /// This is useful for Electron/Chromium apps that need explicit enablement
+    func toggleForceAccessibility() {
+        if isForceAccessibilityEnabled {
+            disableForceAccessibility()
+        } else {
+            enableForceAccessibility()
+        }
+    }
+    
+    /// Enable AXManualAccessibility for the last focused external app (not XKey)
+    func enableForceAccessibility() {
+        // Use the last tracked external app (not XKey itself)
+        guard lastExternalAppPid != 0 else {
+            DispatchQueue.main.async {
+                self.forceAccessibilityStatus = "❌ No external app tracked. Focus on an app first."
+            }
+            return
+        }
+        
+        let pid = lastExternalAppPid
+        let appName = lastExternalAppName
+        let bundleID = lastExternalAppBundleID
+        
+        // Log what we're targeting
+        logEvent("[FORCE-AX] Targeting: \(appName) (\(bundleID)) PID=\(pid)")
+        
+        // Create AX application element
+        let appElement = AXUIElementCreateApplication(pid)
+        
+        // Try to set AXManualAccessibility = true
+        // This tells Chrome/Electron to keep accessibility enabled
+        let result = AXUIElementSetAttributeValue(
+            appElement,
+            "AXManualAccessibility" as CFString,
+            kCFBooleanTrue
+        )
+        
+        DispatchQueue.main.async {
+            if result == .success {
+                self.isForceAccessibilityEnabled = true
+                self.forceAccessibilityPid = pid
+                self.forceAccessibilityStatus = "✅ Enabled for \(appName)"
+                self.logEvent("[FORCE-AX] Enabled AXManualAccessibility for \(appName) (\(bundleID)) PID=\(pid)")
+            } else {
+                let errorDesc = self.axErrorDescription(result)
+                self.forceAccessibilityStatus = "❌ \(appName): \(errorDesc)"
+                self.logEvent("[FORCE-AX] Failed to set AXManualAccessibility for \(appName): \(errorDesc)")
+            }
+        }
+    }
+    
+    /// Disable AXManualAccessibility for the previously enabled app
+    func disableForceAccessibility() {
+        guard forceAccessibilityPid != 0 else {
+            DispatchQueue.main.async {
+                self.isForceAccessibilityEnabled = false
+                self.forceAccessibilityStatus = ""
+            }
+            return
+        }
+        
+        let appElement = AXUIElementCreateApplication(forceAccessibilityPid)
+        
+        // Set AXManualAccessibility = false
+        let result = AXUIElementSetAttributeValue(
+            appElement,
+            "AXManualAccessibility" as CFString,
+            kCFBooleanFalse
+        )
+        
+        DispatchQueue.main.async {
+            self.isForceAccessibilityEnabled = false
+            self.forceAccessibilityPid = 0
+            
+            if result == .success {
+                self.forceAccessibilityStatus = "Disabled"
+                self.logEvent("[FORCE-AX] Disabled AXManualAccessibility")
+            } else {
+                self.forceAccessibilityStatus = "Disabled (app may have closed)"
+            }
+        }
+    }
+    
+    /// Enable AXEnhancedUserInterface for the last focused external app
+    /// Note: This can cause side effects like animation issues in some apps
+    func enableEnhancedUserInterface() {
+        guard lastExternalAppPid != 0 else {
+            DispatchQueue.main.async {
+                self.forceAccessibilityStatus = "❌ No external app tracked"
+            }
+            return
+        }
+        
+        let pid = lastExternalAppPid
+        let appName = lastExternalAppName
+        let bundleID = lastExternalAppBundleID
+        
+        let appElement = AXUIElementCreateApplication(pid)
+        
+        // Try AXEnhancedUserInterface
+        let result = AXUIElementSetAttributeValue(
+            appElement,
+            "AXEnhancedUserInterface" as CFString,
+            kCFBooleanTrue
+        )
+        
+        DispatchQueue.main.async {
+            if result == .success {
+                self.forceAccessibilityStatus = "✅ Enhanced UI for \(appName)"
+                self.logEvent("[FORCE-AX] Enabled AXEnhancedUserInterface for \(appName) (\(bundleID)) PID=\(pid)")
+            } else {
+                let errorDesc = self.axErrorDescription(result)
+                self.forceAccessibilityStatus = "❌ \(appName): \(errorDesc)"
+                self.logEvent("[FORCE-AX] Failed to set AXEnhancedUserInterface for \(appName): \(errorDesc)")
+            }
+        }
+    }
+    
+    /// Check accessibility status of the target app
+    /// This is more useful than trying to force-enable, as it shows what's available
+    func checkAccessibilityStatus() {
+        guard lastExternalAppPid != 0 else {
+            DispatchQueue.main.async {
+                self.forceAccessibilityStatus = "❌ No external app tracked"
+            }
+            return
+        }
+        
+        let pid = lastExternalAppPid
+        let appName = lastExternalAppName
+        let bundleID = lastExternalAppBundleID
+        
+        let appElement = AXUIElementCreateApplication(pid)
+        
+        logEvent("[AX-CHECK] Checking accessibility for \(appName) (\(bundleID)) PID=\(pid)")
+        
+        // Check AXManualAccessibility current value
+        var manualAxRef: CFTypeRef?
+        let manualAxResult = AXUIElementCopyAttributeValue(appElement, "AXManualAccessibility" as CFString, &manualAxRef)
+        let manualAxStatus: String
+        if manualAxResult == .success {
+            if let boolValue = manualAxRef as? Bool {
+                manualAxStatus = boolValue ? "true" : "false"
+            } else {
+                manualAxStatus = "unknown type"
+            }
+        } else {
+            manualAxStatus = axErrorDescription(manualAxResult)
+        }
+        
+        // Check AXEnhancedUserInterface current value
+        var enhancedRef: CFTypeRef?
+        let enhancedResult = AXUIElementCopyAttributeValue(appElement, "AXEnhancedUserInterface" as CFString, &enhancedRef)
+        let enhancedStatus: String
+        if enhancedResult == .success {
+            if let boolValue = enhancedRef as? Bool {
+                enhancedStatus = boolValue ? "true" : "false"
+            } else {
+                enhancedStatus = "unknown type"
+            }
+        } else {
+            enhancedStatus = axErrorDescription(enhancedResult)
+        }
+        
+        // Check if we can get focused window (basic accessibility test)
+        var windowRef: CFTypeRef?
+        let windowResult = AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &windowRef)
+        let windowStatus = windowResult == .success ? "✅ Available" : "❌ \(axErrorDescription(windowResult))"
+        
+        // Check if we can get menu bar (another accessibility test)
+        var menuRef: CFTypeRef?
+        let menuResult = AXUIElementCopyAttributeValue(appElement, kAXMenuBarAttribute as CFString, &menuRef)
+        let menuStatus = menuResult == .success ? "✅ Available" : "❌ \(axErrorDescription(menuResult))"
+        
+        // Log results
+        logEvent("[AX-CHECK] Results:")
+        logEvent("[AX-CHECK]   AXManualAccessibility: \(manualAxStatus)")
+        logEvent("[AX-CHECK]   AXEnhancedUserInterface: \(enhancedStatus)")
+        logEvent("[AX-CHECK]   FocusedWindow: \(windowStatus)")
+        logEvent("[AX-CHECK]   MenuBar: \(menuStatus)")
+        
+        // Determine overall status
+        let hasBasicAccess = windowResult == .success || menuResult == .success
+        
+        DispatchQueue.main.async {
+            if hasBasicAccess {
+                self.forceAccessibilityStatus = "\(appName): Accessibility available"
+            } else {
+                self.forceAccessibilityStatus = "\(appName): Limited AX access"
+            }
+        }
+    }
+    
+    /// Get human-readable description for AXError
+    private func axErrorDescription(_ error: AXError) -> String {
+        switch error {
+        case .success: return "Success"
+        case .failure: return "General failure"
+        case .illegalArgument: return "Illegal argument"
+        case .invalidUIElement: return "Invalid UI element"
+        case .invalidUIElementObserver: return "Invalid observer"
+        case .cannotComplete: return "Cannot complete"
+        case .attributeUnsupported: return "Attribute unsupported (app may not support this)"
+        case .actionUnsupported: return "Action unsupported"
+        case .notificationUnsupported: return "Notification unsupported"
+        case .notImplemented: return "Not implemented"
+        case .notificationAlreadyRegistered: return "Already registered"
+        case .notificationNotRegistered: return "Not registered"
+        case .apiDisabled: return "API disabled - grant Accessibility permission"
+        case .noValue: return "No value"
+        case .parameterizedAttributeUnsupported: return "Parameterized attribute unsupported"
+        case .notEnoughPrecision: return "Not enough precision"
+        @unknown default: return "Unknown error (\(error.rawValue))"
+        }
+    }
+    
+
     // MARK: - Injection Test Properties
     
     /// Input keys for injection test (e.g., "a + s + n + h")
