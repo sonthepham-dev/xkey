@@ -11,6 +11,415 @@ import Foundation
 
 extension String {
     
+    // ============================================
+    // MARK: - Static Lookup Tables for Performance
+    // ============================================
+    
+    /// Characters that NEVER start a Vietnamese word
+    /// Vietnamese alphabet does not include: f, j, w, z
+    /// Any word starting with these is 100% NOT Vietnamese
+    private static let impossibleStartingChars: Set<Character> = ["f", "j", "w", "z"]
+    
+    // ============================================
+    // MARK: - Valid Vietnamese Input Sequences (Telex & VNI)
+    // ============================================
+    // These patterns are VALID input sequences that produce Vietnamese characters
+    // They should NOT be flagged as "impossible" patterns
+    //
+    // TELEX INPUT METHOD:
+    // ┌─────────┬─────────┬────────────────────────────────────┐
+    // │ Input   │ Output  │ Notes                              │
+    // ├─────────┼─────────┼────────────────────────────────────┤
+    // │ dd      │ đ       │ Valid at word start (đi, đến, đã)  │
+    // │ aa      │ â       │ Vowel modifier (cân, tâm)          │
+    // │ ee      │ ê       │ Vowel modifier (kê, đê)            │
+    // │ oo      │ ô       │ Vowel modifier (cô, hô)            │
+    // │ aw      │ ă       │ Vowel modifier (bắt, ăn)           │
+    // │ ow      │ ơ       │ Vowel modifier (cơ, mơ)            │
+    // │ uw      │ ư       │ Vowel modifier (cư, tư)            │
+    // │ w       │ ư       │ Standalone ư                       │
+    // │ [       │ ơ       │ Bracket for ơ                      │
+    // │ ]       │ ư       │ Bracket for ư                      │
+    // └─────────┴─────────┴────────────────────────────────────┘
+    //
+    // VNI INPUT METHOD:
+    // ┌─────────┬─────────┬────────────────────────────────────┐
+    // │ Input   │ Output  │ Notes                              │
+    // ├─────────┼─────────┼────────────────────────────────────┤
+    // │ d9      │ đ       │ Valid at word start (đi, đến, đã)  │
+    // │ a6      │ â       │ Vowel + 6 = circumflex (^)         │
+    // │ e6      │ ê       │ Vowel + 6 = circumflex (^)         │
+    // │ o6      │ ô       │ Vowel + 6 = circumflex (^)         │
+    // │ a8      │ ă       │ Vowel + 8 = breve (˘)              │
+    // │ o7      │ ơ       │ Vowel + 7 = horn (ơ, ư)            │
+    // │ u7      │ ư       │ Vowel + 7 = horn (ơ, ư)            │
+    // │ 1-5     │ tones   │ Tone marks after vowels            │
+    // └─────────┴─────────┴────────────────────────────────────┘
+    //
+    // QUICK TELEX (when vQuickTelex = 1):
+    // ┌─────────┬─────────┬────────────────────────────────────┐
+    // │ Input   │ Output  │ Notes                              │
+    // ├─────────┼─────────┼────────────────────────────────────┤
+    // │ cc      │ ch      │ Quick consonant (chào, chính)      │
+    // │ gg      │ gi      │ Quick consonant (giá, giúp)        │
+    // │ kk      │ kh      │ Quick consonant (không, khác)      │
+    // │ nn      │ ng      │ Quick consonant (người, ngày)      │
+    // │ qq      │ qu      │ Quick consonant (quá, quên)        │
+    // │ pp      │ ph      │ Quick consonant (phải, phong)      │
+    // │ tt      │ th      │ Quick consonant (thì, thế)         │
+    // └─────────┴─────────┴────────────────────────────────────┘
+    //
+    // IMPORTANT: "dd", "d9", and Quick Telex patterns are VALID starting sequences!
+    // They should be EXCLUDED from impossible patterns.
+    
+    /// Valid 2-letter starting patterns for TELEX input method
+    /// These produce valid Vietnamese characters and should NOT be blocked
+    /// Includes: dd → đ, and Quick Telex patterns (cc, gg, kk, nn, qq, pp, tt)
+    private static let validTelexStartingPatterns: Set<String> = [
+        // Standard Telex
+        "dd",  // dd → đ (đi, đến, đã, đây, đó, đang, được, đầu, đề)
+        
+        // Quick Telex (double consonants at word start)
+        "cc",  // cc → ch (chào, chính, cho, chúng)
+        "gg",  // gg → gi (giá, giúp, gì, giờ)
+        "kk",  // kk → kh (không, khác, khi, khó)
+        "nn",  // nn → ng (người, ngày, nghĩ, nghe)
+        "qq",  // qq → qu (quá, quên, quốc, quen)
+        "pp",  // pp → ph (phải, phong, phố, phim)
+        "tt",  // tt → th (thì, thế, thành, theo)
+    ]
+    
+    /// Valid 2-letter starting patterns for VNI input method
+    /// These produce valid Vietnamese characters and should NOT be blocked
+    private static let validVNIStartingPatterns: Set<String> = [
+        "d9",  // d9 → đ (đi, đến, đã, đây, đó, đang, được, đầu, đề)
+    ]
+    
+    /// Combined valid starting patterns for any input method
+    /// Use this when input type is unknown or to be safe
+    private static let allValidInputStartingPatterns: Set<String> = [
+        // Telex patterns
+        "dd",  // đ
+        "cc",  // ch (Quick Telex)
+        "gg",  // gi (Quick Telex)
+        "kk",  // kh (Quick Telex)
+        "nn",  // ng (Quick Telex)
+        "qq",  // qu (Quick Telex)
+        "pp",  // ph (Quick Telex)
+        "tt",  // th (Quick Telex)
+        // VNI patterns
+        "d9",  // đ
+    ]
+    
+    /// Set of 2-letter initial clusters that are IMPOSSIBLE in Vietnamese
+    /// Vietnamese valid initials: b, c, ch, d, đ, g, gh, gi, h, k, kh, l, m, n,
+    ///                           ng, ngh, nh, p, ph, qu, r, s, t, th, tr, v, x
+    private static let impossible2LetterPrefixes: Set<String> = [
+        // ========================================
+        // L-clusters (consonant + L) - Vietnamese NEVER has these
+        // ========================================
+        "bl", "cl", "dl", "fl", "gl", "hl", "jl", "kl", "ml", "nl",
+        "pl", "rl", "sl", "tl", "vl", "wl", "xl", "yl", "zl",
+        
+        // ========================================
+        // R-clusters (consonant + R) - Vietnamese only has "tr", exclude it
+        // ========================================
+        "br", "cr", "dr", "fr", "gr", "hr", "jr", "kr", "lr", "mr", "nr",
+        "pr", "rr", "sr", "vr", "wr", "xr", "yr", "zr",
+        
+        // ========================================
+        // S-clusters - Vietnamese doesn't start with S + consonant
+        // ========================================
+        "sb", "sc", "sd", "sf", "sg", "sh", "sj", "sk", "sl", "sm",
+        "sn", "sp", "sq", "sr", "ss", "st", "sv", "sw", "sx", "sy", "sz",
+        
+        // ========================================
+        // W-clusters - ALL w + letter (Vietnamese NEVER uses 'w')
+        // ========================================
+        "wa", "wb", "wc", "wd", "we", "wf", "wg", "wh", "wi", "wj",
+        "wk", "wl", "wm", "wn", "wo", "wp", "wq", "wr", "ws", "wt",
+        "wu", "wv", "ww", "wx", "wy", "wz",
+        
+        // ========================================
+        // F-clusters - ALL f + letter (Vietnamese NEVER uses 'f')
+        // ========================================
+        "fa", "fb", "fc", "fd", "fe", "ff", "fg", "fh", "fi", "fj",
+        "fk", "fl", "fm", "fn", "fo", "fp", "fq", "fr", "fs", "ft",
+        "fu", "fv", "fw", "fx", "fy", "fz",
+        
+        // ========================================
+        // J-clusters - ALL j + letter (Vietnamese NEVER uses 'j')
+        // ========================================
+        "ja", "jb", "jc", "jd", "je", "jf", "jg", "jh", "ji", "jj",
+        "jk", "jl", "jm", "jn", "jo", "jp", "jq", "jr", "js", "jt",
+        "ju", "jv", "jw", "jx", "jy", "jz",
+        
+        // ========================================
+        // Z-clusters - ALL z + letter (Vietnamese NEVER uses 'z')
+        // ========================================
+        "za", "zb", "zc", "zd", "ze", "zf", "zg", "zh", "zi", "zj",
+        "zk", "zl", "zm", "zn", "zo", "zp", "zq", "zr", "zs", "zt",
+        "zu", "zv", "zw", "zx", "zy", "zz",
+        
+        // ========================================
+        // Other consonant + W clusters (except valid qu)
+        // ========================================
+        "bw", "cw", "dw", "gw", "hw", "kw", "lw", "mw", "nw", "pw",
+        "rw", "sw", "tw", "vw", "xw", "yw",
+        
+        // ========================================
+        // Silent letter patterns and other impossible starts
+        // ========================================
+        "gn", "kn", "pn", "ps", "pt", "pf", "ks", "ts", "tz",
+        
+        // ========================================
+        // Double consonants at start (Vietnamese never has)
+        // EXCEPT: The following are EXCLUDED because they are valid Telex input:
+        // - "dd" → đ (standard Telex)
+        // - "cc" → ch, "gg" → gi, "kk" → kh, "nn" → ng, "pp" → ph, "tt" → th (Quick Telex)
+        // - "qq" → qu (Quick Telex)
+        // These are now in validTelexStartingPatterns and handled by isValidVietnameseInputSequence
+        // ========================================
+        "bb", "ff", "hh", "jj",
+        "ll", "mm", "rr", "ss", "vv", "ww", "xx", "zz",
+        
+        // ========================================
+        // Other invalid consonant combinations
+        // ========================================
+        // B + consonant (except bl, br which are above)
+        "bc", "bd", "bf", "bg", "bh", "bj", "bk", "bm", "bn", "bp", "bq", "bs", "bt", "bv", "bx", "by", "bz",
+        // C + consonant (except ch, cl, cr - ch is valid Vietnamese, cl/cr are above)
+        "cb", "cd", "cf", "cg", "cj", "ck", "cm", "cn", "cp", "cq", "cs", "ct", "cv", "cx", "cy", "cz",
+        // D + consonant (except dr, dw which are above)
+        "db", "dc", "df", "dg", "dh", "dj", "dk", "dm", "dn", "dp", "dq", "ds", "dt", "dv", "dx", "dy", "dz",
+        // G + consonant (except gh, gi, gl, gr - gh/gi are valid Vietnamese, gl/gr are above)
+        "gb", "gc", "gd", "gf", "gj", "gk", "gm", "gp", "gq", "gs", "gt", "gv", "gx", "gy", "gz",
+        // H + consonant
+        "hb", "hc", "hd", "hf", "hg", "hj", "hk", "hl", "hm", "hn", "hp", "hq", "hr", "hs", "ht", "hv", "hx", "hy", "hz",
+        // K + consonant (except kh - kh is valid Vietnamese)
+        "kb", "kc", "kd", "kf", "kg", "kj", "kk", "kl", "km", "kp", "kq", "ks", "kt", "kv", "kx", "ky", "kz",
+        // L + consonant
+        "lb", "lc", "ld", "lf", "lg", "lh", "lj", "lk", "lm", "ln", "lp", "lq", "lr", "ls", "lt", "lv", "lx", "ly", "lz",
+        // M + consonant
+        "mb", "mc", "md", "mf", "mg", "mh", "mj", "mk", "ml", "mn", "mp", "mq", "mr", "ms", "mt", "mv", "mx", "my", "mz",
+        // N + consonant (except ng, nh - these are valid Vietnamese)
+        "nb", "nc", "nd", "nf", "nj", "nk", "nl", "nm", "np", "nq", "nr", "ns", "nt", "nv", "nx", "ny", "nz",
+        // P + consonant (except ph, pl, pr - ph is valid Vietnamese, pl/pr are above)
+        "pb", "pc", "pd", "pg", "pj", "pk", "pm", "pp", "pq", "pv", "px", "py", "pz",
+        // R + consonant
+        "rb", "rc", "rd", "rf", "rg", "rh", "rj", "rk", "rl", "rm", "rn", "rp", "rq", "rs", "rt", "rv", "rx", "ry", "rz",
+        // T + consonant (except th, tr - these are valid Vietnamese)
+        "tb", "tc", "td", "tf", "tg", "tj", "tk", "tl", "tm", "tn", "tp", "tq", "ts", "tv", "tx", "ty", "tz",
+        // V + consonant
+        "vb", "vc", "vd", "vf", "vg", "vh", "vj", "vk", "vl", "vm", "vn", "vp", "vq", "vs", "vt", "vv", "vx", "vy", "vz",
+        // X + consonant
+        "xb", "xc", "xd", "xf", "xg", "xh", "xj", "xk", "xl", "xm", "xn", "xp", "xq", "xs", "xt", "xv", "xx", "xy", "xz",
+    ]
+    
+    /// Set of 3-letter initial clusters that are IMPOSSIBLE in Vietnamese
+    private static let impossible3LetterPrefixes: Set<String> = [
+        // STR family
+        "str", "spr", "spl", "scr", "shr", "squ", "stw", "swr",
+        // SCH/SHR family
+        "sch", "scl", "skr", "skw", "sph", "sth",
+        // THR family
+        "thr", "thw",
+        // CHR/SHR family
+        "chr", "shr", "phr",
+        // Other 3-letter clusters
+        "dge", "dgi", "kni", "pne", "psy", "gho", "ghu", "wri", "wro", "wra",
+        "ght", "ghr", "ghl", "ghw",
+        "ntr", "mpr", "xtr",
+        // GR/GL/GW extended
+        "gra", "gre", "gri", "gro", "gru", "gry",
+        "gla", "gle", "gli", "glo", "glu", "gly",
+        // BR/BL extended
+        "bra", "bre", "bri", "bro", "bru", "bry",
+        "bla", "ble", "bli", "blo", "blu", "bly",
+        // DR extended
+        "dra", "dre", "dri", "dro", "dru", "dry",
+        // CR/CL extended
+        "cra", "cre", "cri", "cro", "cru", "cry",
+        "cla", "cle", "cli", "clo", "clu", "cly",
+        // PR/PL extended
+        "pra", "pre", "pri", "pro", "pru", "pry",
+        "pla", "ple", "pli", "plo", "plu", "ply",
+        // FR/FL extended
+        "fra", "fre", "fri", "fro", "fru", "fry",
+        "fla", "fle", "fli", "flo", "flu", "fly",
+        // WR extended
+        "wra", "wre", "wri", "wro", "wru",
+    ]
+    
+    /// Set of 4-letter initial clusters that are IMPOSSIBLE in Vietnamese
+    private static let impossible4LetterPrefixes: Set<String> = [
+        // SCHR/SCHT/SCHW family (German loanwords)
+        "schr", "schw", "schn", "schm", "schl",
+        // STRI/STRA/STRO family
+        "stra", "stre", "stri", "stro", "stru", "stry",
+        // SPRI/SPRA family  
+        "spra", "spre", "spri", "spro", "spru", "spry",
+        // SCRA/SCRE/SCRI family
+        "scra", "scre", "scri", "scro", "scru", "scry",
+        // SPLA/SPLE family
+        "spla", "sple", "spli", "splo", "splu",
+        // SQUA/SQUE/SQUI family
+        "squa", "sque", "squi", "squo",
+        // THRO/THRA family
+        "thra", "thre", "thri", "thro", "thru", "thry",
+        // CHRO/CHRA family
+        "chra", "chre", "chri", "chro", "chru",
+        // PHRA/PHRE family
+        "phra", "phre", "phri", "phro",
+        // SHRA/SHRE family
+        "shra", "shre", "shri", "shro", "shru",
+        // Other
+        "psyc", "pneu", "ghri",
+    ]
+    
+    // ============================================
+    // MARK: - Main Detection Properties
+    // ============================================
+    
+    /// Ultra-fast detection: Does this word START with a pattern that is
+    /// 100% IMPOSSIBLE in Vietnamese?
+    /// 
+    /// This is the most reliable rule because:
+    /// 1. Vietnamese has a closed set of valid initial consonants/clusters
+    /// 2. Uses Set lookup for O(1) performance
+    /// 3. False positive rate is 0% (these patterns NEVER occur in Vietnamese)
+    ///
+    /// Valid Vietnamese initials: b, c, ch, d, đ, g, gh, gi, h, k, kh, l, m, n,
+    ///                           ng, ngh, nh, p, ph, qu, r, s, t, th, tr, v, x
+    ///
+    /// - Parameter allowZFWJ: If true, allows words starting with z, f, w, j (for foreign words)
+    /// Examples detected: "winner", "water", "food", "fast", "jazz", "zero",
+    ///                    "street", "spring", "chrome", "psychology", "knight"
+    func startsWithImpossibleVietnameseCluster(allowZFWJ: Bool = false) -> Bool {
+        let word = self.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        guard !word.isEmpty else { return false }
+        
+        // ============================================
+        // RULE 0 (FASTEST): Check if word starts with letters that
+        // NEVER exist in Vietnamese alphabet: f, j, w, z
+        // ============================================
+        // This catches: winner, water, food, fast, jazz, jungle, zero, zone, etc.
+        // Vietnamese NEVER uses these letters at the start of words
+        // This is the fastest check - O(1) Set lookup on a single character
+        // EXCEPTION: If allowZFWJ is true, skip this check (for "Allow consonant Z, F, W, J" setting)
+        if !allowZFWJ {
+            if let firstChar = word.first, Self.impossibleStartingChars.contains(firstChar) {
+                return true
+            }
+        }
+        
+        // For single character words, we've already checked impossible chars above
+        guard word.count >= 2 else { return false }
+        
+        // Check 2-letter prefixes (most common case - check first for efficiency)
+        let prefix2 = String(word.prefix(2))
+        // When allowZFWJ is true, skip prefixes starting with z, f, w, j
+        let skipPrefix = allowZFWJ && (prefix2.hasPrefix("z") || prefix2.hasPrefix("f") || 
+                                        prefix2.hasPrefix("w") || prefix2.hasPrefix("j"))
+        if !skipPrefix && Self.impossible2LetterPrefixes.contains(prefix2) {
+            return true
+        }
+        
+        // Check 3-letter prefixes
+        if word.count >= 3 {
+            let prefix3 = String(word.prefix(3))
+            // When allowZFWJ is true, skip prefixes starting with z, f, w, j
+            let skipPrefix3 = allowZFWJ && (prefix3.hasPrefix("z") || prefix3.hasPrefix("f") || 
+                                            prefix3.hasPrefix("w") || prefix3.hasPrefix("j"))
+            if !skipPrefix3 && Self.impossible3LetterPrefixes.contains(prefix3) {
+                return true
+            }
+        }
+        
+        // Check 4-letter prefixes (most specific)
+        if word.count >= 4 {
+            let prefix4 = String(word.prefix(4))
+            // When allowZFWJ is true, skip prefixes starting with z, f, w, j
+            let skipPrefix4 = allowZFWJ && (prefix4.hasPrefix("z") || prefix4.hasPrefix("f") || 
+                                            prefix4.hasPrefix("w") || prefix4.hasPrefix("j"))
+            if !skipPrefix4 && Self.impossible4LetterPrefixes.contains(prefix4) {
+                return true
+            }
+        }
+        
+        return false
+    }
+    
+    /// Check if this RAW INPUT string starts with a valid Vietnamese input sequence
+    /// This is used to EXCLUDE valid typing patterns from being flagged as "impossible"
+    ///
+    /// For example:
+    /// - "dd" in Telex → produces "đ" → should NOT be blocked
+    /// - "d9" in VNI → produces "đ" → should NOT be blocked
+    /// - "str" → NOT a valid sequence → should be blocked
+    ///
+    /// - Parameter inputType: 0 = Telex, 1 = VNI, 2 = Simple Telex, 3 = VIQR
+    /// - Returns: true if starts with valid Vietnamese input sequence
+    func isValidVietnameseInputSequence(inputType: Int = 0) -> Bool {
+        let input = self.lowercased()
+        
+        guard input.count >= 2 else { return false }
+        
+        let prefix2 = String(input.prefix(2))
+        
+        switch inputType {
+        case 0, 2, 3: // Telex, Simple Telex, VIQR
+            return Self.validTelexStartingPatterns.contains(prefix2)
+        case 1: // VNI
+            return Self.validVNIStartingPatterns.contains(prefix2)
+        default:
+            // Unknown input type - check all patterns to be safe
+            return Self.allValidInputStartingPatterns.contains(prefix2)
+        }
+    }
+    
+    /// Check if RAW INPUT starts with a pattern that is DEFINITELY NOT Vietnamese
+    /// This considers valid input sequences like "dd" (Telex) or "d9" (VNI)
+    ///
+    /// - Parameter inputType: 0 = Telex, 1 = VNI, 2 = Simple Telex, 3 = VIQR
+    /// - Parameter allowZFWJ: If true, allows words starting with z, f, w, j (for foreign words)
+    /// - Returns: true if raw input starts with impossible pattern (excluding valid input sequences)
+    func startsWithImpossiblePatternForRawInput(inputType: Int = 0, allowZFWJ: Bool = false) -> Bool {
+        // First, check if this is a valid Vietnamese input sequence
+        // If so, it's NOT impossible - return false early
+        if isValidVietnameseInputSequence(inputType: inputType) {
+            return false
+        }
+        
+        // Otherwise, check against impossible patterns
+        return startsWithImpossibleVietnameseCluster(allowZFWJ: allowZFWJ)
+    }
+    
+    /// Check if RAW INPUT is definitely NOT Vietnamese based on START patterns only.
+    /// 
+    /// This is a conservative check that ONLY looks at the beginning of the word.
+    /// Middle and end patterns are NOT checked here because:
+    /// 1. Telex uses 'w' as a vowel modifier (ư, ơ, ă) which could create false clusters
+    /// 2. Free Mark allows adding tone at the end of word
+    /// 3. Complex patterns could interfere with valid Vietnamese input sequences
+    ///
+    /// Cases like "micros" (where middle/end patterns indicate English) are handled by:
+    /// - Spell checking after word is complete
+    /// - Instant restore feature (if enabled)
+    ///
+    /// - Parameter inputType: 0 = Telex, 1 = VNI, 2 = Simple Telex, 3 = VIQR
+    /// - Parameter allowZFWJ: If true, allows words starting with z, f, w, j (for foreign words)
+    /// - Returns: true if raw input STARTS with impossible Vietnamese pattern
+    func isDefinitelyNotVietnameseForRawInput(inputType: Int = 0, allowZFWJ: Bool = false) -> Bool {
+        // Simply delegate to the start pattern check
+        // This already handles:
+        // 1. Valid Vietnamese input sequences (dd, cc, gg, etc.)
+        // 2. Impossible starting characters (f, j, w, z) - unless allowZFWJ is true
+        // 3. Impossible 2/3/4-letter prefixes (str, bl, gr, etc.)
+        return startsWithImpossiblePatternForRawInput(inputType: inputType, allowZFWJ: allowZFWJ)
+    }
+    
     /// Ultra-fast English detection for real-time typing
     /// Returns true if word is DEFINITELY English (high confidence)
     /// Used to skip Vietnamese spell checking and processing
@@ -20,6 +429,14 @@ extension String {
         // Empty or too short to determine
         if word.count < 2 {
             return false
+        }
+        
+        // ============================================
+        // RULE 0: Check impossible Vietnamese prefixes (FASTEST)
+        // ============================================
+        // This uses Set lookup for O(1) performance
+        if startsWithImpossibleVietnameseCluster() {
+            return true
         }
         
         // ============================================
@@ -81,21 +498,28 @@ extension String {
         }
         
         // ============================================
-        // RULE 5: English consonant clusters at START
+        // RULE 5: Additional English consonant clusters at START
         // ============================================
-        // These initial clusters don't exist in Vietnamese
+        // (Most are already covered by startsWithImpossibleVietnameseCluster)
+        // This is kept for backwards compatibility and edge cases
         if word.count >= 3 {
             let englishInitialClusters = [
                 // 3-letter clusters (check first)
                 "str", "spr", "scr", "spl", "shr", "thr", "sch", "squ",
+                // 4-letter clusters
+                "schr", "schw", "stri", "spri", "squa",
                 // L-clusters (Vietnamese doesn't have these)
                 "bl", "cl", "fl", "gl", "pl", "sl",
                 // R-clusters (Vietnamese only has "tr", exclude it)
                 "br", "cr", "dr", "fr", "gr", "pr",
                 // S-clusters
-                "sc", "sk", "sm", "sn", "sp", "st", "sw",
+                "sc", "sk", "sm", "sn", "sp", "st", "sw", "sh",
+                // W-clusters
+                "wh", "wr",
                 // Other clusters
-                "dw", "tw", "gn"
+                "dw", "tw", "gn", "kn", "pn", "ps",
+                // CHR/PHR patterns
+                "chr", "phr"
             ]
             for cluster in englishInitialClusters {
                 if word.hasPrefix(cluster) {
@@ -280,7 +704,12 @@ extension String {
         // ============================================
         // RULE 2: English consonant clusters at START
         // ============================================
-        // These initial clusters don't exist in Vietnamese
+        // Uses O(1) Set-based lookup for impossible Vietnamese prefixes
+        if startsWithImpossibleVietnameseCluster() {
+            return true
+        }
+        
+        // Additional clusters check for edge cases
         if word.count >= 3 {
             let englishInitialClusters = [
                 // 3-letter clusters (check first)
@@ -290,9 +719,13 @@ extension String {
                 // R-clusters (Vietnamese only has "tr", exclude it)
                 "br", "cr", "dr", "fr", "gr", "pr",
                 // S-clusters
-                "sc", "sk", "sm", "sn", "sp", "st", "sw",
+                "sc", "sk", "sm", "sn", "sp", "st", "sw", "sh",
+                // W-clusters
+                "wh", "wr",
                 // Other clusters
-                "dw", "tw", "gn"
+                "dw", "tw", "gn", "kn", "pn", "ps",
+                // CHR/PHR patterns
+                "chr", "phr"
             ]
             for cluster in englishInitialClusters {
                 if word.hasPrefix(cluster) {

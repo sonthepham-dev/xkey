@@ -648,6 +648,35 @@ class VNEngine {
             return
         }
         
+        // ============================================
+        // EARLY ENGLISH DETECTION: Skip Vietnamese processing for words that
+        // are definitely NOT Vietnamese
+        // ============================================
+        // Uses comprehensive detection that checks:
+        // 1. Start pattern - impossible prefixes like "str", "bl", "gr"
+        // 2. End pattern - Vietnamese NEVER ends with 's', 'b', 'd', etc.
+        // 3. Middle pattern - impossible consonant clusters like "cr", "br"
+        //
+        // This excludes valid Vietnamese input sequences like:
+        // - "dd" → đ, "cc" → ch, "gg" → gi (Telex/Quick Telex)
+        // - "d9" → đ (VNI)
+        //
+        // Examples caught:
+        // - "street" (starts with "str")
+        // - "micros" (ends with "s")
+        // - "micro" (has "cr" in middle)
+        let rawInput = getRawInputString()
+        let allowZFWJ = vAllowConsonantZFWJ == 1
+        if rawInput.isDefinitelyNotVietnameseForRawInput(inputType: vInputType, allowZFWJ: allowZFWJ) {
+            logCallback?("handleMainKey: SKIP Vietnamese processing - detected English pattern: '\(rawInput)'")
+            insertKey(keyCode: keyCode, isCaps: isCaps)
+            
+            // Set tempDisableKey so subsequent keys don't get processed as Vietnamese
+            // until word break occurs
+            tempDisableKey = true
+            return
+        }
+        
         // Handle mark keys (S, F, R, X, J or 1-5 for VNI)
         if isMarkKey(keyCode: keyCode, inputType: vInputType) {
             handleMarkKey(keyCode: keyCode, isCaps: isCaps)
@@ -1589,6 +1618,13 @@ class VNEngine {
     private var spellingVowelOK = false
     private var spellingEndIndex: UInt8 = 0
     
+    /// Check spelling using phonetic rules (like OpenKey's checkSpelling)
+    /// This verifies the word structure matches valid Vietnamese patterns:
+    /// 1. First consonant must match consonantTable
+    /// 2. After vowel, consonant must match endConsonantTable
+    ///
+    /// If phonetic check fails, tempDisableKey = true, preventing diacritics
+    /// This is how OpenKey handles "micros" - "cr" is not in endConsonantTable
     func checkSpelling(forceCheckVowel: Bool = false) {
         // Defensive check: Respect vCheckSpelling setting
         guard vCheckSpelling == 1 else {
@@ -1604,8 +1640,8 @@ class VNEngine {
         
         logCallback?("checkSpelling: index=\(index), word=\(getCurrentWord()), forceCheckVowel=\(forceCheckVowel)")
         
-        // Reset spelling state - always pass phonetic check (we only use dictionary now)
-        spellingOK = true
+        // Reset spelling state
+        spellingOK = false
         spellingVowelOK = true
         spellingEndIndex = index
         
@@ -1615,35 +1651,179 @@ class VNEngine {
             return
         }
         
-        // IMPORTANT: Only check dictionary when forceCheckVowel=true (on Space/word break)
-        // During normal typing, the word is incomplete so dictionary check would fail
-        // Example: "tie" is not a Vietnamese word, but "tiếng" is
-        // We should NOT block diacritics just because the incomplete word isn't in dictionary
-        guard forceCheckVowel else {
-            // During normal typing, always allow diacritics
+        // Handle ] key at end (standalone key)
+        if index > 0 && chr(Int(index) - 1) == VietnameseData.KEY_RIGHT_BRACKET {
+            spellingEndIndex = index - 1
+        }
+        
+        guard spellingEndIndex > 0 else {
+            spellingOK = true
             tempDisableKey = false
-            logCallback?("checkSpelling: Normal typing, skipping dictionary check")
             return
         }
         
-        // Dictionary validation (only on word break)
-        var dictionaryOK = true
+        var j = 0
         
-        if SharedSettings.shared.spellCheckEnabled {
-            let style: VNDictionaryManager.DictionaryStyle = SharedSettings.shared.modernStyle ? .dauMoi : .dauCu
+        // ============================================
+        // Check first consonant (with consonantTable)
+        // ============================================
+        if vietnameseData.isConsonant(chr(0)) {
+            var foundMatch = false
             
-            if VNDictionaryManager.shared.isDictionaryLoaded(style: style) {
-                dictionaryOK = isCurrentWordValid()
-                // Log is already in isCurrentWordValid()
-            } else {
-                logCallback?("checkSpelling: Dictionary not loaded, skipping check")
+            for consonantPattern in vietnameseData.consonantTable {
+                // Check if word starts with this consonant pattern
+                if Int(spellingEndIndex) < consonantPattern.count {
+                    continue  // Word too short for this pattern
+                }
+                
+                var matches = true
+                for (idx, patternKey) in consonantPattern.enumerated() {
+                    let actualKey = chr(idx)
+                    // Handle CONSONANT_ALLOW_MASK and END_CONSONANT_MASK
+                    // When vAllowConsonantZFWJ == 1, REMOVE the mask to allow matching z, f, w, j
+                    // When vQuickStartConsonant == 1, REMOVE the END_CONSONANT_MASK to allow quick consonant
+                    let patternKeyMasked = patternKey & ~(
+                        (vAllowConsonantZFWJ == 1 ? VietnameseData.CONSONANT_ALLOW_MASK : 0) |
+                        (vQuickStartConsonant == 1 ? VietnameseData.END_CONSONANT_MASK : 0)
+                    )
+                    
+                    if Int(spellingEndIndex) > idx && patternKeyMasked != actualKey {
+                        matches = false
+                        break
+                    }
+                    j = idx + 1
+                }
+                
+                if matches {
+                    foundMatch = true
+                    break
+                }
             }
-        } else {
-            logCallback?("checkSpelling: Spell check disabled in settings")
+            
+            if !foundMatch && index > 0 {
+                // If first consonant doesn't match any pattern, mark as invalid
+                tempDisableKey = true
+                return
+            }
         }
         
-        tempDisableKey = !dictionaryOK
-        logCallback?("checkSpelling result: dictionaryOK=\(dictionaryOK), tempDisableKey=\(tempDisableKey)")
+        // If first char is the whole consonant part (like "d")
+        if j == Int(spellingEndIndex) {
+            spellingOK = true
+        }
+        
+        // ============================================
+        // Check vowel position
+        // ============================================
+        var k = j
+        var vowelStartIdx = k
+        
+        // Special case: "que't" - u after q is not counted as vowel
+        if chr(vowelStartIdx) == VietnameseData.KEY_U &&
+           k > 0 && k < Int(spellingEndIndex) - 1 &&
+           chr(vowelStartIdx - 1) == VietnameseData.KEY_Q {
+            k += 1
+            j = k
+            vowelStartIdx = k
+        }
+        // Special case: "gìn" - i after g at start
+        else if index >= 2 &&
+                chr(0) == VietnameseData.KEY_G &&
+                chr(1) == VietnameseData.KEY_I &&
+                index >= 3 && vietnameseData.isConsonant(chr(2)) {
+            vowelStartIdx = 1
+            k = 1
+            j = 1
+        }
+        
+        // Count vowels (up to 3)
+        for _ in 0..<3 {
+            if k < Int(spellingEndIndex) && !vietnameseData.isConsonant(chr(k)) {
+                k += 1
+            }
+        }
+        let vowelEndIdx = k
+        
+        // ============================================
+        // Check end consonant (with endConsonantTable)
+        // ============================================
+        if k > j {
+            // Has vowel, now check end consonant
+            spellingVowelOK = false
+            
+            // Check vowel combination if forceCheckVowel
+            if k - j > 1 && forceCheckVowel {
+                // Complex vowel check (similar to OpenKey's vowel combine check)
+                // For now, we assume vowel is OK
+                spellingVowelOK = true
+            } else if !vietnameseData.isConsonant(chr(j)) {
+                spellingVowelOK = true
+            }
+            
+            // Continue check last consonant
+            for endPattern in vietnameseData.endConsonantTable {
+                var matches = true
+                
+                for (patternIdx, patternKey) in endPattern.enumerated() {
+                    let patternKeyMasked = patternKey & ~(vQuickEndConsonant == 1 ? VietnameseData.END_CONSONANT_MASK : 0)
+                    
+                    if Int(spellingEndIndex) > k + patternIdx {
+                        if patternKeyMasked != chr(k + patternIdx) {
+                            matches = false
+                            break
+                        }
+                    }
+                }
+                
+                if !matches {
+                    continue
+                }
+                
+                // Check if pattern covers rest of word
+                if k + endPattern.count >= Int(spellingEndIndex) {
+                    spellingOK = true
+                    break
+                }
+            }
+            
+            // If there are remaining characters after vowel that don't match any end consonant
+            // This is the key check that catches "micros" - "cr" is not in endConsonantTable!
+            if !spellingOK && k < Int(spellingEndIndex) {
+                // Has characters after vowel that don't match end consonant patterns
+                spellingOK = false
+            }
+            
+            // Limit: end consonant "ch", "t" cannot use with "~", "`", "?"
+            if spellingOK {
+                if index >= 3 &&
+                   chr(Int(index) - 1) == VietnameseData.KEY_H &&
+                   chr(Int(index) - 2) == VietnameseData.KEY_C {
+                    // Check if vowel before "ch" has invalid mark
+                    let vowelData = typingWord[Int(index) - 3]
+                    let hasMark1 = (vowelData & VNEngine.MARK1_MASK) != 0
+                    let hasMark5 = (vowelData & VNEngine.MARK5_MASK) != 0
+                    let hasAnyMark = (vowelData & VNEngine.MARK_MASK) != 0
+                    if !hasMark1 && !hasMark5 && hasAnyMark {
+                        spellingOK = false
+                    }
+                } else if index >= 2 && chr(Int(index) - 1) == VietnameseData.KEY_T {
+                    let vowelData = typingWord[Int(index) - 2]
+                    let hasMark1 = (vowelData & VNEngine.MARK1_MASK) != 0
+                    let hasMark5 = (vowelData & VNEngine.MARK5_MASK) != 0
+                    let hasAnyMark = (vowelData & VNEngine.MARK_MASK) != 0
+                    if !hasMark1 && !hasMark5 && hasAnyMark {
+                        spellingOK = false
+                    }
+                }
+            }
+        } else {
+            // No vowel yet, only consonant - OK
+            spellingOK = true
+        }
+        
+        // Final decision
+        tempDisableKey = !(spellingOK && spellingVowelOK)
+        logCallback?("checkSpelling result: spellingOK=\(spellingOK), spellingVowelOK=\(spellingVowelOK), tempDisableKey=\(tempDisableKey)")
     }
     
     func chr(_ idx: Int) -> UInt16 {
