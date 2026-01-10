@@ -1370,7 +1370,8 @@ class VNEngine {
                (v1HasToneW && v2Key == VietnameseData.KEY_I) ||
                (v1HasToneW && v2Key == VietnameseData.KEY_A) ||
                (v2HasToneW && v1Key == VietnameseData.KEY_I) ||  // iơ -> io + w
-               (v2HasToneW && v1Key == VietnameseData.KEY_O && v2Key == VietnameseData.KEY_A) {  // oă -> oa + w
+               (v2HasToneW && v1Key == VietnameseData.KEY_O && v2Key == VietnameseData.KEY_A) ||  // oă -> oa + w
+               (v2HasToneW && v1Key == VietnameseData.KEY_U && v2Key == VietnameseData.KEY_O) {  // uơ -> uo + w (for "thuơ" case)
                 // Restore and disable temporary
                 hookState.code = UInt8(vRestore)
                 
