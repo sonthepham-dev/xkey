@@ -1885,6 +1885,12 @@ class VNEngine {
         
         var isAdjusted = false
         
+        // IMPORTANT: Save vowelStartIndex before calling insertMarkInternal
+        // insertMarkInternal calls findAndCalculateVowel() internally which may
+        // return different results (e.g., for "gi" case where forGrammar affects results)
+        // We need the original vowelStartIndex for the final loop that sends charData
+        let savedVowelStartIndex = vowelStartIndex
+        
         // Check mark position
         if index >= 2 {
             // IMPORTANT: Save current hookState before calling insertMarkInternal
@@ -1921,13 +1927,17 @@ class VNEngine {
         logCallback?("  → isAdjusted=\(isAdjusted)")
         
         // Re-arrange data to send back
+        // IMPORTANT: Use savedVowelStartIndex here because insertMarkInternal may have
+        // changed vowelStartIndex (it calls findAndCalculateVowel with forGrammar: false
+        // which treats "gi" differently). For "gisup" -> "giúp", we need to include
+        // the "i" in "gi" when sending charData to remove the mark that was on it.
         if isAdjusted {
             if hookState.code == UInt8(vDoNothing) {
                 hookState.code = UInt8(vWillProcess)
             }
             hookState.backspaceCount = 0
             
-            for i in stride(from: Int(index) - 1, through: vowelStartIndex, by: -1) {
+            for i in stride(from: Int(index) - 1, through: savedVowelStartIndex, by: -1) {
                 hookState.backspaceCount += 1
                 hookState.charData[Int(index) - 1 - i] = getCharacterCode(typingWord[i])
             }
