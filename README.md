@@ -5,7 +5,7 @@
   
   **Bộ gõ tiếng Việt hiện đại cho macOS**
   
-  [![Version](https://img.shields.io/badge/version-1.2.17-blue.svg)](https://github.com/xmannv/xkey/releases)
+  [![Version](https://img.shields.io/badge/version-1.2.19-blue.svg)](https://github.com/xmannv/xkey/releases)
   [![macOS](https://img.shields.io/badge/macOS-12.0+-green.svg)](https://www.apple.com/macos/)
   [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 </div>
@@ -26,13 +26,13 @@ Các bộ gõ tiếng Việt hiện tại trên macOS đang gặp một số v�
 ### ✨ Điểm nổi bật
 
 - ⚡ **Hiệu suất vượt trội**: Viết hoàn toàn bằng **Swift native**, tối ưu hóa tối đa cho macOS, phản hồi tức thì
-- 🎯 **Tương thích hoàn hảo**: Chạy mượt mà trên tất cả phiên bản macOS mới nhất
-- 🔧 **Ổn định & Không bug**: Code base hiện đại, được test kỹ lưỡng, cập nhật thường xuyên
+- 🎯 **Tương thích hoàn hảo**: Chạy mượt mà trên tất cả phiên bản macOS mới nhất (12.0+)
+- 🔧 **Ổn định & Cập nhật thường xuyên**: Code base hiện đại, được test kỹ lưỡng với auto-update
 - 🛠️ **Debug Window**: Cửa sổ debug chuyên nghiệp giúp developer theo dõi real-time hoạt động của bộ gõ
-- 🚀 **Tính năng thông minh**: Smart Switch, Macro, Quick Typing, kiểm tra chính tả
+- 🚀 **Tính năng thông minh**: Smart Switch, Macro, Quick Typing, kiểm tra chính tả, từ điển cá nhân
 - 🎨 **Giao diện hiện đại**: Thiết kế theo phong cách Apple với SwiftUI
 - 🔒 **Bảo mật**: Chạy local, không thu thập dữ liệu người dùng
-- ⌨️ **IMKit Mode**: Hỗ trợ Input Method Kit cho trải nghiệm mượt mà trong Terminal và IDE
+- ⌨️ **Dual Mode**: Hỗ trợ cả CGEvent và Input Method Kit (XKeyIM)
 
 ---
 
@@ -46,95 +46,125 @@ Các bộ gõ tiếng Việt hiện tại trên macOS đang gặp một số v�
 
 | Chế độ | Mô tả | Ưu điểm |
 |--------|-------|---------|
-| **CGEvent** (Mặc định) | Sử dụng CGEvent injection | Không cần cấu hình, hoạt động ngay |
-| **IMKit** (Thử nghiệm) | Sử dụng Input Method Kit | Mượt mà hơn trong Terminal/IDE |
+| **CGEvent** (Mặc định) | Sử dụng CGEvent injection | Không cần cấu hình, hoạt động ngay với mọi app |
+| **XKeyIM** (Thử nghiệm) | Sử dụng Input Method Kit | Mượt mà hơn trong Terminal, Spotlight, Address Bar |
 
 ### 2. Hỗ trợ đa kiểu gõ
 
-- **Telex**: Kiểu gõ phổ biến nhất (ví dụ: `tiếng` → tiếng)
-- **VNI**: Kiểu gõ truyền thống (ví dụ: `tie61ng` → tiếng)
-- **VIQR**: Kiểu gõ chuẩn quốc tế (ví dụ: `tie^'ng` → tiếng)
+| Kiểu gõ | Mô tả | Ví dụ |
+|---------|-------|-------|
+| **Telex** | Kiểu gõ phổ biến nhất | `tieengs` → tiếng |
+| **VNI** | Kiểu gõ truyền thống với số | `tie61ng` → tiếng |
+| **Simple Telex 1** | Telex đơn giản (w không biến đổi) | `tieengs` → tiếng |
+| **Simple Telex 2** | Telex + w cho ư/ơ | `tuaw` → tưa |
 
 ### 3. Bảng mã đa dạng
 
-- Unicode (UTF-8) - Khuyến nghị
-- TCVN3 (ABC)
-- VNI Windows
-- Unicode Compound
+- **Unicode (UTF-8)** - Khuyến nghị, mặc định
+- **TCVN3 (ABC)** - Tương thích với phần mềm cũ
+- **VNI Windows** - Tương thích với font VNI
 
 ### 4. Gõ nhanh (Quick Typing)
 
 Tăng tốc độ gõ với các phím tắt thông minh:
 
-#### Quick Telex
-- `cc` → `ch`, `gg` → `gi`, `kk` → `kh`
-- `nn` → `ng`, `pp` → `ph`, `qq` → `qu`, `tt` → `th`
-
-#### Quick Consonant - Đầu từ
-- `f` → `ph`, `j` → `gi`, `w` → `qu`
-
-#### Quick Consonant - Cuối từ
-- `g` → `ng`, `h` → `nh`, `k` → `ch`
+| Tính năng | Chức năng |
+|-----------|-----------|
+| **Quick Telex** | `cc`→`ch`, `gg`→`gi`, `kk`→`kh`, `nn`→`ng`, `pp`→`ph`, `qq`→`qu`, `tt`→`th` |
+| **Quick Start Consonant** | `f`→`ph`, `j`→`gi`, `w`→`qu` (đầu từ) |
+| **Quick End Consonant** | `g`→`ng`, `h`→`nh`, `k`→`ch` (cuối từ) |
 
 ### 5. Macro (Text Shortcuts)
 
 Tự động thay thế văn bản với Macro:
-- Tạo các từ viết tắt tùy chỉnh
-- Hỗ trợ import/export danh sách macro
-- Tự động viết hoa macro
+- ✅ Tạo các từ viết tắt tùy chỉnh
+- ✅ Hỗ trợ import/export danh sách macro (.txt)
+- ✅ Tùy chọn tự động viết hoa macro
+- ✅ Tùy chọn thêm khoảng trắng sau macro
+- ✅ Sử dụng macro trong cả chế độ tiếng Anh
 
 ### 6. Công cụ chuyển đổi văn bản
 
-- **Chữ hoa/thường**: Viết hoa tất cả, viết thường tất cả, viết hoa chữ đầu
-- **Bảng mã**: Chuyển đổi giữa Unicode, TCVN3, VNI
-- **Xóa dấu**: Chuyển từ có dấu sang không dấu
+Truy cập nhanh với phím tắt tùy chỉnh:
 
-### 7. Tính năng nâng cao
+| Tính năng | Mô tả |
+|-----------|-------|
+| **Chữ hoa/thường** | Viết hoa tất cả, viết thường tất cả, viết hoa chữ đầu, viết hoa mỗi từ |
+| **Bảng mã** | Chuyển đổi giữa Unicode ↔ TCVN3 ↔ VNI |
+| **Xóa dấu** | Chuyển từ có dấu sang không dấu |
 
-- **Kiểm tra chính tả**: Tự động phát hiện và sửa lỗi
-- **Smart Switch**: Nhớ ngôn ngữ theo từng ứng dụng
-- **Tạm tắt thông minh**: Ctrl tắt chính tả, Option tắt bộ gõ
-- **Debug Window**: Theo dõi real-time hoạt động của bộ gõ
+### 7. Kiểm tra chính tả (Thử nghiệm)
 
-### 8. Hiệu chỉnh XKey Engine xử lý theo ứng dụng
+- 📖 Sử dụng từ điển tiếng Việt (~200KB, GPL license)
+- 🔄 Tự động khôi phục khi gõ sai chính tả
+- ✏️ Hỗ trợ cả dấu mới (xoà) và dấu cũ (xóa)
+- 👤 **Từ điển cá nhân**: Thêm các từ riêng để bỏ qua kiểm tra
+- 📥 Import/Export từ điển cá nhân
 
-Phát hiện ngữ cảnh đặc biệt dựa trên tiêu đề cửa sổ, giải quyết vấn đề gõ tiếng Việt trong các web apps khác nhau:
+### 8. Smart Switch
+
+- 🧠 Nhớ ngôn ngữ theo từng ứng dụng
+- 🔍 Hỗ trợ phát hiện Spotlight/Raycast/Alfred overlay apps
+- 🔄 Tự động chuyển ngôn ngữ khi chuyển app
+
+### 9. Quản lý Input Sources
+
+- 📋 Xem danh sách tất cả Input Sources
+- ✅ Bật/tắt XKey cho từng Input Source cụ thể
+- 🔀 Phím tắt chuyển nhanh sang XKey/ABC
+- 🔔 Tự động phát hiện Input Sources tiếng Việt khác
+
+### 10. Hiệu chỉnh XKey Engine theo ứng dụng (Window Title Rules)
+
+Phát hiện ngữ cảnh đặc biệt dựa trên tiêu đề cửa sổ, giải quyết vấn đề gõ tiếng Việt trong các web apps:
 
 | Web App | Xử lý đặc biệt |
 |---------|----------------|
 | Google Docs/Sheets/Slides | Tắt marked text, slow injection |
 | Notion, Figma | Điều chỉnh delay phù hợp |
+| Và nhiều apps khác... | Tùy chỉnh theo nhu cầu |
 
-**Ưu điểm:**
+**Tính năng Window Title Rules:**
 - ✅ Tự động nhận diện web apps trong bất kỳ browser nào
 - ✅ Áp dụng xử lý phù hợp cho từng context
-- ✅ Có thể tùy chỉnh rules theo nhu cầu
+- ✅ Ghi đè injection method, delay, text sending method
+- ✅ Tự động chuyển Input Source khi rule match
+- ✅ Hỗ trợ Regex matching
 
-**Cấu hình:** Settings → Nâng cao → Hiệu chỉnh XKey Engine xử lý theo ứng dụng
+**Cấu hình:** Settings → Nâng cao → Hiệu chỉnh XKey Engine theo ứng dụng
 
 #### Hướng dẫn thêm quy tắc mới
 
-1. Mở **Settings** → **Nâng cao** → **Hiệu chỉnh XKey Engine xử lý theo ứng dụng**
+1. Mở **Settings** → **Nâng cao** → **Hiệu chỉnh XKey Engine theo ứng dụng**
 2. Nhấn **"Thêm quy tắc"**
 3. Điền thông tin:
-   - **Tên**: Tên hiển thị cho quy tắc (VD: "Safari Google Docs" hoặc "Safari Google Tài liệu")
-   - **Bundle ID**: `*` để áp dụng cho tất cả apps, hoặc chọn app cụ thể (VD: "com.google.Safari")
-   - **Title Pattern**: Từ khóa để nhận diện trong tiêu đề cửa sổ (VD: "Google Docs" hoặc "Google Tài liệu")
-   - **Match mode**: Chọn cách so khớp (Chứa, Bắt đầu bằng, Kết thúc bằng, Khớp chính xác, Regex)
+   - **Tên**: Tên hiển thị cho quy tắc
+   - **Bundle ID**: `*` để áp dụng cho tất cả apps, hoặc chọn app cụ thể
+   - **Title Pattern**: Từ khóa để nhận diện trong tiêu đề cửa sổ
+   - **Match mode**: Chứa, Bắt đầu bằng, Kết thúc bằng, Khớp chính xác, hoặc Regex
 4. Cấu hình behavior (tùy chọn):
    - **Ghi đè Marked Text**: Bật/tắt gạch chân khi gõ
-   - **Ghi đè Injection Method**: Chọn Fast, Slow, Selection, hoặc Autocomplete (VD: "Slow" cho Safari Google Docs)
+   - **Ghi đè Injection Method**: Fast, Slow, Selection, Autocomplete, AX Direct hoặc Passthrough
    - **Tùy chỉnh Injection Delays**: Điều chỉnh delay (µs) cho Backspace, Wait, Text
-   - **Phương thức gửi text**: Chọn Chunked hoặc One-by-One (VD: "One-by-One" cho Safari Google Docs)
+   - **Phương thức gửi text**: Chunked hoặc One-by-One
+   - **Chuyển Input Source**: Tự động chuyển sang Input Source cụ thể
 5. Nhấn **"Thêm"** để lưu
 
-> **💡 Lưu ý quan trọng:** Nếu bạn sử dụng Google Docs/Sheets/Slides với ngôn ngữ **tiếng Việt**, tiêu đề cửa sổ sẽ hiển thị là **"Google Tài liệu"**, **"Google Trang tính"**, **"Google Trang trình bày"** thay vì tên tiếng Anh. Bạn cần tạo thêm quy tắc với Title Pattern tương ứng:
->
-> | Tên tiếng Anh | Tên tiếng Việt |
-> |---------------|----------------|
-> | Google Docs | Google Tài liệu |
-> | Google Sheets | Google Trang tính |
-> | Google Slides | Google Trang trình bày |
+> **💡 Lưu ý:** Nếu bạn sử dụng Google Docs/Sheets/Slides với ngôn ngữ **tiếng Việt**, tiêu đề cửa sổ sẽ hiển thị là **"Google Tài liệu"**, **"Google Trang tính"**, **"Google Trang trình bày"**. Bạn cần tạo thêm quy tắc với Title Pattern tương ứng.
+
+### 11. Tính năng khác
+
+| Tính năng | Mô tả |
+|-----------|-------|
+| **Hoàn tác gõ (Undo)** | Nhấn phím tắt để hoàn tác việc bỏ dấu (`tiếng` → `tieesng`) |
+| **Free Mark** | Đặt dấu tự do ở bất kỳ vị trí nào trong từ |
+| **Kiểu gõ hiện đại** | Hỗ trợ cả dấu mới (oà/uý) và dấu cũ (òa/úy) |
+| **Tạm tắt thông minh** | Ctrl tắt chính tả, Option tắt bộ gõ tạm thời |
+| **Thanh công cụ nổi** | Điều khiển nhanh XKey tại vị trí con trỏ |
+| **Loại trừ ứng dụng** | Tắt XKey cho các app cụ thể |
+| **Auto-update** | Tự động cập nhật phiên bản mới với Sparkle |
+| **Backup/Restore** | Sao lưu và khôi phục toàn bộ cài đặt |
+| **Debug Window** | Theo dõi real-time hoạt động của bộ gõ |
 
 ---
 
@@ -171,7 +201,7 @@ cd xkey/XKey
 
 ## ⌨️ XKeyIM - Input Method Kit Mode
 
-XKeyIM là Input Method sử dụng IMKit của Apple, cung cấp trải nghiệm gõ mượt mà hơn trong Terminal và IDE.
+XKeyIM là Input Method sử dụng IMKit của Apple, cung cấp trải nghiệm gõ mượt mà hơn trong các ứng dụng có độ trễ phản hồi thấp hoặc có cơ chế autocomplete như Terminal, Spotlight, Address Bar.
 
 ### Bundle Identifiers
 
@@ -181,15 +211,23 @@ XKeyIM là Input Method sử dụng IMKit của Apple, cung cấp trải nghiệ
 | XKeyIM (input method) | `com.codetay.inputmethod.XKey` |
 | App Group | `group.com.codetay.xkey` |
 
+### Tính năng XKeyIM
+
+| Tính năng | Mô tả |
+|-----------|-------|
+| **Marked Text Mode** | Hiển thị gạch chân khi gõ - ổn định và tương thích tốt (khuyến nghị) |
+| **Direct Mode** | Không gạch chân - có thể gặp lỗi trong một số app |
+| **Phím hoàn tác** | ESC để hoàn tác (ví dụ: "thử" → "thur") |
+| **Phím tắt chuyển nhanh** | Tuỳ chỉnh phím tắt toggle giữa XKey và ABC |
+
 ### Cài đặt XKeyIM
 
-1. Mở XKey Settings → **Nâng cao**
-2. Bật **"IMKit Mode"**
-3. Click **"Cài đặt XKeyIM..."**
-4. Copy `XKeyIM.app` vào `~/Library/Input Methods/`
-5. Logout/Login lại
-6. Mở **System Settings** → **Keyboard** → **Input Sources**
-7. Click **"+"** và thêm **"XKey Vietnamese"**
+1. Mở XKey Settings → **Input Sources**
+2. Click **"Cài đặt XKeyIM..."**
+3. Copy `XKeyIM.app` vào `~/Library/Input Methods/`
+4. Logout/Login lại
+5. Mở **System Settings** → **Keyboard** → **Input Sources**
+6. Click **"+"** và thêm **"XKey Vietnamese"**
 
 ### Quyền truy cập cho XKeyIM
 
@@ -200,6 +238,8 @@ XKeyIM cần quyền **Accessibility** để xử lý một số tổ hợp phí
 3. Bật quyền cho XKeyIM
 
 > **Lưu ý:** Nếu không cấp quyền Accessibility, XKeyIM vẫn hoạt động bình thường cho việc gõ tiếng Việt. Quyền này chỉ cần thiết để đảm bảo các phím tắt như Ctrl+C hoạt động đúng khi đang có văn bản đang soạn (marked text).
+
+> **Phím hoàn tác:** XKeyIM sử dụng phím ESC làm phím hoàn tác mặc định (không thể tùy chỉnh do hạn chế của Input Method Kit). Bấm ESC khi đang gõ từ có dấu tiếng Việt sẽ hoàn tác về dạng không dấu.
 
 ### Build XKeyIM từ mã nguồn
 
@@ -213,13 +253,17 @@ Xem hướng dẫn chi tiết tại [XKeyIM/README.md](XKeyIM/README.md)
 
 ```
 XKey/
+├── Shared/               # Shared code between XKey and XKeyIM
+│   ├── SharedSettings.swift
+│   └── AppBehaviorDetector.swift
 ├── XKey/
-│   ├── App/              # Entry point
+│   ├── App/              # Entry point, AppDelegate
 │   ├── Core/             # Core engine
-│   │   ├── Engine/       # Vietnamese input engine
-│   │   └── Models/       # Data models
-│   ├── EventHandling/    # Keyboard event handling
-│   ├── UI/               # SwiftUI views
+│   │   ├── Engine/       # Vietnamese input engine (VNEngine.swift, etc.)
+│   │   └── Models/       # Data models (Preferences, VNCharacter, etc.)
+│   ├── EventHandling/    # Keyboard event handling, EventTap
+│   ├── InputMethod/      # Input source management
+│   ├── UI/               # SwiftUI views and settings sections
 │   └── Utilities/        # Helper utilities
 ├── XKeyIM/               # Input Method Kit bundle
 │   ├── Info.plist        # IMKit configuration
@@ -281,11 +325,14 @@ ENABLE_NOTARIZE=true ./build_release.sh
 
 ### Công nghệ sử dụng
 
-- **Swift Native**: 100% Swift code
-- **SwiftUI**: Giao diện người dùng hiện đại
-- **Input Method Kit**: Native input method support
-- **Core Graphics**: Event handling
-- **Accessibility API**: Keyboard monitoring
+| Công nghệ | Mục đích |
+|-----------|----------|
+| **Swift Native** | 100% Swift code, tối ưu cho macOS |
+| **SwiftUI** | Giao diện người dùng hiện đại |
+| **Input Method Kit** | Native input method support (XKeyIM) |
+| **Core Graphics Events** | Keyboard event handling và injection |
+| **Accessibility API** | Focus detection với AXObserver |
+| **Sparkle** | Auto-update framework |
 
 ### Settings Persistence (Lưu trữ cài đặt)
 

@@ -109,9 +109,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Application Lifecycle
     
+    /// Check if app is running under unit tests
+    private var isRunningTests: Bool {
+        return NSClassFromString("XCTestCase") != nil
+    }
+    
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Set shared instance for access from SwiftUI views
         AppDelegate.shared = self
+        
+        // Skip most setup when running under unit tests
+        // Tests only need access to VNEngine and related classes
+        if isRunningTests {
+            // Minimal setup for tests - just create the handler without event tap
+            keyboardHandler = KeyboardEventHandler()
+            return
+        }
         
         // Create debug window first
         setupDebugWindow()

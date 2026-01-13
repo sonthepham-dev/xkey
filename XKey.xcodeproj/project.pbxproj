@@ -98,6 +98,8 @@
 		LAUNCHATLOGIN001 /* LaunchAtLogin.swift in Sources */ = {isa = PBXBuildFile; fileRef = LAUNCHATLOGIN002 /* LaunchAtLogin.swift */; };
 		MACROVM001 /* MacroManagementViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = MACROVM002 /* MacroManagementViewModel.swift */; };
 		STATUSBARVM001 /* StatusBarViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = STATUSBARVM002 /* StatusBarViewModel.swift */; };
+		TEST00001 /* VNEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TEST00002 /* VNEngineTests.swift */; };
+		TEST00003 /* KeyCodeToCharacterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TEST00004 /* KeyCodeToCharacterTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -175,6 +177,9 @@
 		LAUNCHATLOGIN002 /* LaunchAtLogin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchAtLogin.swift; sourceTree = "<group>"; };
 		MACROVM002 /* MacroManagementViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacroManagementViewModel.swift; sourceTree = "<group>"; };
 		STATUSBARVM002 /* StatusBarViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBarViewModel.swift; sourceTree = "<group>"; };
+		TEST00002 /* VNEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VNEngineTests.swift; sourceTree = "<group>"; };
+		TEST00004 /* KeyCodeToCharacterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyCodeToCharacterTests.swift; sourceTree = "<group>"; };
+		TEST00005 /* XKeyTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = XKeyTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -194,6 +199,13 @@
 			buildActionMask = 2147483647;
 			files = (
 				1097C5E52EF6662500969052 /* Sparkle in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		TEST00006 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -257,6 +269,7 @@
 				10FDCC182EF5885200B2D9AC /* Shared */,
 				A5000002 /* XKey */,
 				100D2BAE2EF2B89600C26B87 /* XKeyIM */,
+				TEST00007 /* XKeyTests */,
 				A5000003 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -282,6 +295,7 @@
 			children = (
 				A0000001 /* XKey.app */,
 				100D2BAD2EF2B89600C26B87 /* XKeyIM.app */,
+				TEST00005 /* XKeyTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -377,6 +391,15 @@
 			path = Engine;
 			sourceTree = "<group>";
 		};
+		TEST00007 /* XKeyTests */ = {
+			isa = PBXGroup;
+			children = (
+				TEST00002 /* VNEngineTests.swift */,
+				TEST00004 /* KeyCodeToCharacterTests.swift */,
+			);
+			path = XKeyTests;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -417,6 +440,24 @@
 			productReference = A0000001 /* XKey.app */;
 			productType = "com.apple.product-type.application";
 		};
+		TEST00008 /* XKeyTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = TEST00009 /* Build configuration list for PBXNativeTarget "XKeyTests" */;
+			buildPhases = (
+				TEST00010 /* Sources */,
+				TEST00006 /* Frameworks */,
+				TEST00011 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				TEST00012 /* PBXTargetDependency */,
+			);
+			name = XKeyTests;
+			productName = XKeyTests;
+			productReference = TEST00005 /* XKeyTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -432,6 +473,10 @@
 					};
 					A6000001 = {
 						CreatedOnToolsVersion = 15.0;
+					};
+					TEST00008 = {
+						CreatedOnToolsVersion = 15.0;
+						TestTargetID = A6000001;
 					};
 				};
 			};
@@ -454,6 +499,7 @@
 			targets = (
 				A6000001 /* XKey */,
 				100D2BAC2EF2B89600C26B87 /* XKeyIM */,
+				TEST00008 /* XKeyTests */,
 			);
 		};
 /* End PBXProject section */
@@ -471,6 +517,13 @@
 			buildActionMask = 2147483647;
 			files = (
 				10133E5C2EF04B0C00BBE6AE /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		TEST00011 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -580,7 +633,34 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		TEST00010 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				TEST00001 /* VNEngineTests.swift in Sources */,
+				TEST00003 /* KeyCodeToCharacterTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXContainerItemProxy section */
+		TEST00013 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A5000000 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A6000001;
+			remoteInfo = XKey;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXTargetDependency section */
+		TEST00012 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A6000001 /* XKey */;
+			targetProxy = TEST00013 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		100D2BB52EF2B89600C26B87 /* Debug */ = {
@@ -846,6 +926,42 @@
 			};
 			name = Release;
 		};
+		TEST00014 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 7E6Z9B4F2H;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 12.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.codetay.XKeyTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/XKey.app/Contents/MacOS/XKey";
+			};
+			name = Debug;
+		};
+		TEST00015 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 7E6Z9B4F2H;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 12.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.codetay.XKeyTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/XKey.app/Contents/MacOS/XKey";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -872,6 +988,15 @@
 			buildConfigurations = (
 				A7000003 /* Debug */,
 				A7000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		TEST00009 /* Build configuration list for PBXNativeTarget "XKeyTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				TEST00014 /* Debug */,
+				TEST00015 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

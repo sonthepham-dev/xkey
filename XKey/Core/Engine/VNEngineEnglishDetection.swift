@@ -164,9 +164,14 @@ extension String {
         
         // ========================================
         // Other consonant + W clusters (except valid qu)
+        // NOTE: In Telex/Simple Telex, consonant + w CAN produce valid "Xư" patterns
+        //       (e.g., "hw" → "hư", "bw" → "bư", etc.)
+        //       These patterns are SKIPPED when inputType is Telex (0, 2, 3)
+        //       See consonantWClusters set below for the skip logic.
         // ========================================
         "bw", "cw", "dw", "gw", "hw", "kw", "lw", "mw", "nw", "pw",
         "rw", "sw", "tw", "vw", "xw", "yw",
+
         
         // ========================================
         // Silent letter patterns and other impossible starts
@@ -238,6 +243,15 @@ extension String {
         // E + a (English "ea" sound) → Vietnamese has NO "ea-" words
         "ea",  // ear, each, eat, easy, earn, earth
     ]
+    
+    /// Consonant + W clusters that are valid in Telex/Simple Telex 2 for standalone "ư"
+    /// These patterns should be SKIPPED when inputType is Telex (0) or Simple Telex 2 (3)
+    /// In VNI (1) and Simple Telex 1 (2), 'w' has no special meaning, so these patterns indicate English
+    private static let consonantWClusters: Set<String> = [
+        "bw", "cw", "dw", "gw", "hw", "kw", "lw", "mw", "nw", "pw",
+        "rw", "sw", "tw", "vw", "xw", "yw"
+    ]
+
     
     /// Set of 3-letter initial clusters that are IMPOSSIBLE in Vietnamese
     private static let impossible3LetterPrefixes: Set<String> = [
@@ -411,7 +425,7 @@ extension String {
     /// Check if RAW INPUT starts with a pattern that is DEFINITELY NOT Vietnamese
     /// This considers valid input sequences like "dd" (Telex) or "d9" (VNI)
     ///
-    /// - Parameter inputType: 0 = Telex, 1 = VNI, 2 = Simple Telex, 3 = VIQR
+    /// - Parameter inputType: 0 = Telex, 1 = VNI, 2 = Simple Telex 1, 3 = Simple Telex 2
     /// - Parameter allowZFWJ: If true, allows words starting with z, f, w, j (for foreign words)
     /// - Returns: true if raw input starts with impossible pattern (excluding valid input sequences)
     func startsWithImpossiblePatternForRawInput(inputType: Int = 0, allowZFWJ: Bool = false) -> Bool {
@@ -419,6 +433,22 @@ extension String {
         // If so, it's NOT impossible - return false early
         if isValidVietnameseInputSequence(inputType: inputType) {
             return false
+        }
+        
+        let word = self.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // For Telex (0) and Simple Telex 2 (3), skip consonant + W patterns
+        // because 'w' is a vowel modifier that can create valid "Xư" patterns
+        // like "hw" → "hư", "bw" → "bư", "thw" → "thư", etc.
+        // For VNI (1) and Simple Telex 1 (2), 'w' has no special meaning, so these patterns indicate English
+        let supportsStandaloneW = (inputType == 0 || inputType == 3)
+        
+        if supportsStandaloneW && word.count >= 2 {
+            let prefix2 = String(word.prefix(2))
+            if Self.consonantWClusters.contains(prefix2) {
+                // This is a valid Telex pattern (consonant + w → Xư), not English
+                return false
+            }
         }
         
         // Otherwise, check against impossible patterns

@@ -1254,10 +1254,22 @@ class VNEngine {
         
         logCallback?("insertAOE: keyCode=\(keyCode), index=\(index)")
         logCallback?("  Current buffer: \(getCurrentWord())")
+        logCallback?("  vowelStartIndex=\(vowelStartIndex), vowelEndIndex=\(vowelEndIndex)")
         
-        // Remove W tone from all vowels
+        // Track which vowels had TONEW_MASK removed (e.g., ư → u, ơ → o)
+        // This is needed to update the output for ALL affected vowels, not just the one getting ^
+        // Example: "cươi" + "o" → need to update both ư→u AND ơ→ô
+        var earliestAffectedIndex = Int(index)  // Start with no affected vowels
+        
+        // Remove W tone from all vowels and track the earliest affected vowel
         for i in vowelStartIndex...vowelEndIndex {
-            typingWord[i] &= ~VNEngine.TONEW_MASK
+            if (typingWord[i] & VNEngine.TONEW_MASK) != 0 {
+                typingWord[i] &= ~VNEngine.TONEW_MASK
+                if i < earliestAffectedIndex {
+                    earliestAffectedIndex = i
+                }
+                logCallback?("  Removed TONEW_MASK from index \(i), key=\(chr(i))")
+            }
         }
         
         hookState.code = UInt8(vWillProcess)
@@ -1270,10 +1282,15 @@ class VNEngine {
         var markToMove: UInt32 = 0
         var markSourceIndex = -1
         
+        // Track the index where we found the target vowel (a, o, or e)
+        var targetVowelIndex = -1
+        
         for i in stride(from: Int(index) - 1, through: 0, by: -1) {
             hookState.backspaceCount += 1
             logCallback?("  Loop i=\(i), chr=\(chr(i)), looking for=\(keyCode)")
             if chr(i) == keyCode {
+                targetVowelIndex = i
+                
                 // Reverse unicode char
                 if (typingWord[i] & VNEngine.TONE_MASK) != 0 {
                     // Restore and disable temporary
@@ -1341,6 +1358,21 @@ class VNEngine {
             for i in startIdx..<Int(index) {
                 hookState.charData[Int(index) - 1 - i] = getCharacterCode(typingWord[i])
             }
+        }
+        
+        // FIX: If TONEW_MASK was removed from vowels BEFORE the target vowel,
+        // we need to extend backspaceCount and regenerate charData for those vowels too.
+        // Example: "cươi" + "o" → target is ơ (index 2), but ư (index 1) also needs update
+        // Without this fix, we would output "cưôi" instead of "cuôi"
+        if earliestAffectedIndex < targetVowelIndex && targetVowelIndex >= 0 {
+            logCallback?("  FIX: Extending output to include vowel at index \(earliestAffectedIndex) (TONEW removed)")
+            let startIdx = earliestAffectedIndex
+            hookState.backspaceCount = Int(index) - startIdx
+            hookState.newCharCount = hookState.backspaceCount
+            for i in startIdx..<Int(index) {
+                hookState.charData[Int(index) - 1 - i] = getCharacterCode(typingWord[i])
+            }
+            return  // Early return since we've already set newCharCount
         }
         
         hookState.newCharCount = hookState.backspaceCount
