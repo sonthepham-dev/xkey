@@ -1804,6 +1804,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     
+    /// Check if a signature indicates a temporary menu/popup element
+    /// These elements (like Facebook's tag suggestion dropdown) should NOT reset the engine buffer
+    /// because they are temporary UI elements that appear during typing
+    private func isMenuOrPopupSignature(_ signature: String) -> Bool {
+        // Menu-related roles that should not reset engine buffer
+        let menuRoles = [
+            "AXMenuItem",
+            "AXMenu",
+            "AXMenuBar",
+            "AXMenuButton",
+            "AXMenuBarItem",
+            "AXPopUpButton",
+            "AXList",       // Often used for autocomplete dropdowns
+            "AXListBox",    // List boxes in autocomplete
+            "AXRow"         // Individual rows in lists
+        ]
+        
+        for role in menuRoles {
+            if signature.hasPrefix(role) {
+                return true
+            }
+        }
+        return false
+    }
+    
     /// Check if focused element has changed within the same app (e.g., CMD+T in browser)
     /// If so, re-detect injection method and reset engine
     /// - Parameter element: The currently focused AXUIElement (passed from handleFocusCheck)
@@ -1813,6 +1838,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         // Check if signature changed (different element type)
         if currentSignature != lastFocusedElementSignature && !lastFocusedElementSignature.isEmpty {
+            // Check if this is a focus change to/from a menu/popup element
+            // If so, DON'T reset the engine - these are temporary elements
+            // (e.g., Facebook's user tag suggestion dropdown appearing while typing)
+            let isFromMenu = isMenuOrPopupSignature(lastFocusedElementSignature)
+            let isToMenu = isMenuOrPopupSignature(currentSignature)
+            
+            if isFromMenu || isToMenu {
+                // Focus moved to/from a temporary menu element
+                // Just log it but don't reset engine to preserve typing buffer
+                debugWindowController?.logEvent("Focus changed (keyboard): \(lastFocusedElementSignature) → \(currentSignature)")
+                debugWindowController?.logEvent("   → Menu/popup element detected, preserving engine buffer")
+                // Update signature and return early
+                lastFocusedElementSignature = currentSignature
+                return
+            }
+            
             // Focus changed within same app (different element type)
             // Re-detect injection method
             let detector = AppBehaviorDetector.shared
@@ -1918,6 +1959,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         // Only process if signature actually changed
         if currentSignature != lastFocusedElementSignature && !lastFocusedElementSignature.isEmpty {
+            // Check if this is a focus change to/from a menu/popup element
+            // If so, DON'T reset the engine - these are temporary elements
+            // (e.g., Facebook's user tag suggestion dropdown appearing while typing)
+            let isFromMenu = isMenuOrPopupSignature(lastFocusedElementSignature)
+            let isToMenu = isMenuOrPopupSignature(currentSignature)
+            
+            if isFromMenu || isToMenu {
+                // Focus moved to/from a temporary menu element
+                // Just log it but don't reset engine to preserve typing buffer
+                debugWindowController?.logEvent("Focus changed (AXObserver): \(lastFocusedElementSignature) → \(currentSignature)")
+                debugWindowController?.logEvent("   → Menu/popup element detected, preserving engine buffer")
+                // Update signature and element, then return early
+                lastFocusedElementSignature = currentSignature
+                lastFocusedElement = element
+                return
+            }
+            
             // Re-detect injection method
             let detector = AppBehaviorDetector.shared
             let injectionInfo = detector.detectInjectionMethod()
