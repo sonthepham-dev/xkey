@@ -251,6 +251,14 @@ extension String {
         "bw", "cw", "dw", "gw", "hw", "kw", "lw", "mw", "nw", "pw",
         "rw", "sw", "tw", "vw", "xw", "yw"
     ]
+    
+    /// Digraph + W clusters that are valid in Telex/Simple Telex 2.
+    /// These represent valid Vietnamese consonant digraphs followed by 'w' for 'ư'.
+    /// Examples: thw → thư, chw → chư, khw → khư, phw → phư, trw → trư, etc.
+    /// Note: "nghw" and "ghw" are NOT included because "ngh" and "gh" only appear before i, e, ê (not ư).
+    private static let digraphWClusters: Set<String> = [
+        "thw", "chw", "khw", "phw", "trw", "nhw", "ngw"
+    ]
 
     
     /// Set of 3-letter initial clusters that are IMPOSSIBLE in Vietnamese
@@ -260,7 +268,8 @@ extension String {
         // SCH/SHR family
         "sch", "scl", "skr", "skw", "sph", "sth",
         // THR family
-        "thr", "thw",
+        // NOTE: "thw" is EXCLUDED - it's valid in Telex/Simple Telex 2 (thw → thư)
+        "thr",
         // CHR/SHR family
         "chr", "shr", "phr",
         // Other 3-letter clusters
@@ -473,6 +482,15 @@ extension String {
                 let prefix2 = String(word.prefix(2))
                 if Self.consonantWClusters.contains(prefix2) {
                     // This is a valid Telex pattern (consonant + w → Xư), not English
+                    return false
+                }
+            }
+            
+            // Allow digraph + w patterns (thw → thư, chw → chư, khw → khư, etc.)
+            if word.count >= 3 {
+                let prefix3 = String(word.prefix(3))
+                if Self.digraphWClusters.contains(prefix3) {
+                    // This is a valid Telex pattern (digraph + w → Xư), not English
                     return false
                 }
             }
