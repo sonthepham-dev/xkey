@@ -23,6 +23,10 @@ class CharacterInjector {
     
     private var eventSource: CGEventSource?
     private var isTypingMidSentence: Bool = false  // Track if user moved cursor (typing in middle of text)
+    private static let niceSpaceApps: Set<String> = [
+        "com.sublimetext.2",
+        "com.sublimetext.3"
+    ]
     
     /// Semaphore to ensure injection completes before next keystroke is processed
     /// This prevents race conditions where backspace arrives before previous injection is rendered
@@ -151,7 +155,20 @@ class CharacterInjector {
                     usleep(delays.wait)
                     debugCallback?("    → Post-backspace wait: \(delays.wait)µs")
                 }
-            
+            case .emptyChar:
+                debugCallback?("    → Empty Char method: delays=\(delays), directPost=\(useDirectPost)")
+                sendEmptyCharacter(proxy: proxy)
+                let adjustedBackspaceCount = backspaceCount + 1
+                for i in 0..<adjustedBackspaceCount {
+                    sendBackspaceKey(codeTable: codeTable, proxy: proxy, useDirectPost: useDirectPost)
+                    usleep(delays.backspace)
+                    debugCallback?("    → Backspace \(i + 1)/\(adjustedBackspaceCount)")
+                }
+                // Wait after all backspaces
+                if adjustedBackspaceCount > 0 {
+                    usleep(delays.wait)
+                    debugCallback?("    → Post-backspace wait: \(delays.wait)µs")
+                }
             case .passthrough:
                 // Passthrough should never reach here - it's filtered at shouldProcessEvent level
                 // But if it does, just return without doing anything
@@ -480,7 +497,7 @@ class CharacterInjector {
             debugCallback?("    → Slow method (Terminal/IDE): delays=\(delays)")
             injectViaBackspace(count: count, codeTable: codeTable, delays: delays, proxy: proxy)
 
-        case .fast:
+        case .fast, .emptyChar:
             // Fast method: minimal delays, no Forward Delete
             debugCallback?("    → Fast method (normal)")
             injectViaBackspace(count: count, codeTable: codeTable, delays: delays, proxy: proxy)

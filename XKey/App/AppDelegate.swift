@@ -1429,6 +1429,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         case .slow: return "Slow"
         case .selection: return "Selection"
         case .autocomplete: return "Autocomplete"
+        case .emptyChar: return "Empty Char"
         case .axDirect: return "AX Direct"
         case .passthrough: return "Passthrough"
         }

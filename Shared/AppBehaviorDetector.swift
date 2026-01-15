@@ -55,6 +55,7 @@ enum InjectionMethod: String, Codable, CaseIterable {
     case slow           // Terminals/IDEs: backspace + text with higher delays
     case selection      // Browser address bars: Shift+Left select + type replacement
     case autocomplete   // Spotlight: Forward Delete + backspace + text
+    case emptyChar      // Empty character + backspace + text (autocomplete fix)
     case axDirect       // Firefox content area: Use Accessibility API to set text directly
     case passthrough    // Bypass Vietnamese processing - just pass keystrokes through
 
@@ -64,6 +65,7 @@ enum InjectionMethod: String, Codable, CaseIterable {
         case .slow: return "Slow"
         case .selection: return "Selection"
         case .autocomplete: return "Autocomplete"
+        case .emptyChar: return "Empty Char"
         case .axDirect: return "AX Direct"
         case .passthrough: return "Passthrough"
         }
@@ -75,6 +77,7 @@ enum InjectionMethod: String, Codable, CaseIterable {
         case .slow: return "Backspace + gõ text với delay cao (Terminal, IDE)"
         case .selection: return "Shift+Left select + gõ thay thế (Browser address bar)"
         case .autocomplete: return "Forward Delete + backspace + text (Spotlight, Raycast)"
+        case .emptyChar: return "Empty char + backspace + text (fix autocomplete)"
         case .axDirect: return "Dùng Accessibility API trực tiếp (Firefox content area)"
         case .passthrough: return "Bỏ qua xử lý Tiếng Việt - chỉ truyền phím thẳng qua"
         }
@@ -88,6 +91,7 @@ enum InjectionMethod: String, Codable, CaseIterable {
         case .slow:         return (3000, 6000, 3000)   // High delays for terminals/IDEs
         case .selection:    return (1000, 3000, 2000)   // Medium delays for selection-based injection
         case .autocomplete: return (1000, 3000, 1000)   // Fast text, for overlays like Spotlight
+        case .emptyChar:    return (1000, 3000, 1500)   // Same as fast, plus empty-char injection
         case .axDirect:     return (1000, 3000, 2000)   // Medium delays for AX API injection
         case .passthrough:  return (0, 0, 0)            // No delays needed - passthrough doesn't inject
         }
@@ -360,6 +364,7 @@ struct WindowTitleRule: Codable, Identifiable {
             case "slow": injectionMethod = .slow
             case "selection": injectionMethod = .selection
             case "autocomplete": injectionMethod = .autocomplete
+            case "emptychar": injectionMethod = .emptyChar
             case "axdirect": injectionMethod = .axDirect
             case "passthrough": injectionMethod = .passthrough
             default: injectionMethod = nil
@@ -394,6 +399,7 @@ struct WindowTitleRule: Codable, Identifiable {
             case .slow: methodString = "slow"
             case .selection: methodString = "selection"
             case .autocomplete: methodString = "autocomplete"
+            case .emptyChar: methodString = "emptyChar"
             case .axDirect: methodString = "axDirect"
             case .passthrough: methodString = "passthrough"
             }

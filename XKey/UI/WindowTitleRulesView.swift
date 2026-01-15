@@ -571,6 +571,7 @@ struct RuleRowView: View {
         case .slow: return "Slow"
         case .selection: return "Select"
         case .autocomplete: return "Auto"
+        case .emptyChar: return "Empty"
         case .axDirect: return "AX"
         case .passthrough: return "Pass"
         }

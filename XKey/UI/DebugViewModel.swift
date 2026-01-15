@@ -658,6 +658,7 @@ class DebugViewModel: ObservableObject {
             case .slow: injectionMethodName = "Slow"
             case .selection: injectionMethodName = "Selection"
             case .autocomplete: injectionMethodName = "Autocomplete"
+            case .emptyChar: injectionMethodName = "Empty Char"
             case .axDirect: injectionMethodName = "AX Direct"
             case .passthrough: injectionMethodName = "Passthrough"
         }
@@ -1276,7 +1277,7 @@ class DebugViewModel: ObservableObject {
     private let injectionTestKeystrokeDelay: UInt32 = 80_000  // 80ms
     
     /// All injection methods available for testing
-    let injectionMethodsToTest: [InjectionMethod] = [.fast, .slow, .selection, .autocomplete, .axDirect]
+    let injectionMethodsToTest: [InjectionMethod] = [.fast, .slow, .selection, .autocomplete, .emptyChar, .axDirect]
     
     /// Callback to get CharacterInjector for injection test
     var characterInjectorProvider: (() -> CharacterInjector)?
