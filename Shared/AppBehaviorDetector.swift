@@ -1695,7 +1695,7 @@ class AppBehaviorDetector {
                 return InjectionMethodInfo(
                     method: .axDirect,
                     delays: InjectionMethod.axDirect.defaultDelays,
-                    textSendingMethod: .chunked,
+                    textSendingMethod: .oneByOne,
                     description: "Firefox Address Bar"
                 )
             }
