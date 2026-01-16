@@ -233,8 +233,8 @@ struct MergedRuleResult {
 }
 
 /// Rule for window title-based app behavior detection
-/// Allows combining bundle ID and window title to identify specific contexts
-/// (e.g., Google Docs opened in Safari vs regular Safari browsing)
+/// Allows combining bundle ID, window title, and AX attributes to identify specific contexts
+/// (e.g., Google Docs opened in Safari vs regular Safari browsing, Notion code blocks, etc.)
 struct WindowTitleRule: Codable, Identifiable {
     var id = UUID()
     
@@ -252,6 +252,26 @@ struct WindowTitleRule: Codable, Identifiable {
     
     /// Whether this rule is enabled
     var isEnabled: Bool = true
+    
+    // MARK: - AX-Based Matching (Phase 1)
+    
+    /// AX Role pattern to match (e.g., "AXTextArea", "AXTextField", "AXComboBox")
+    /// Empty or nil = match any role
+    let axRolePattern: String?
+    
+    /// AX Description pattern to match (e.g., "Address and search bar", "Terminal*")
+    /// Supports same matchMode as titlePattern (contains, prefix, suffix, regex, exact)
+    /// Empty or nil = match any description
+    let axDescriptionPattern: String?
+    
+    /// AX Identifier pattern to match (e.g., "urlbar-input", "WEB_BROWSER_ADDRESS_AND_SEARCH_FIELD")
+    /// Empty or nil = match any identifier
+    let axIdentifierPattern: String?
+    
+    /// AX DOM Class List - match if focused element contains ANY of these classes
+    /// Useful for web content detection (e.g., ["notranslate"] for Notion code blocks)
+    /// Empty or nil = skip DOM class matching
+    let axDOMClassList: [String]?
     
     // MARK: - Behavior Overrides
     
@@ -288,9 +308,13 @@ struct WindowTitleRule: Codable, Identifiable {
     
     // MARK: - Matching
     
-    /// Check if this rule matches the given bundle ID and window title
-    /// When titlePattern is empty, the rule matches any window of the app (skip window title check)
-    func matches(bundleId: String, windowTitle: String) -> Bool {
+    /// Check if this rule matches the given bundle ID, window title, and AX info
+    /// - Parameters:
+    ///   - bundleId: The app's bundle identifier
+    ///   - windowTitle: The focused window's title
+    ///   - axInfo: The focused element's AX attributes (required for rules with AX patterns)
+    /// - Returns: true if all specified patterns match
+    func matches(bundleId: String, windowTitle: String, axInfo: AppBehaviorDetector.FocusedElementInfo?) -> Bool {
         // Check bundle ID pattern
         if !bundleIdPattern.isEmpty {
             // If pattern contains pipe | it's OR matching
@@ -318,19 +342,76 @@ struct WindowTitleRule: Codable, Identifiable {
             }
         }
         
-        // If titlePattern is empty, match any window of the app (skip window title check)
-        if titlePattern.isEmpty {
-            return true
+        // If titlePattern is NOT empty, check window title pattern
+        if !titlePattern.isEmpty {
+            if !matchMode.matches(title: windowTitle, pattern: titlePattern) {
+                return false
+            }
         }
         
-        // Check window title pattern
-        return matchMode.matches(title: windowTitle, pattern: titlePattern)
+        // MARK: AX-Based Matching
+        // If any AX pattern is specified, we need axInfo to match
+        let hasAXPatterns = (axRolePattern != nil && !axRolePattern!.isEmpty) ||
+                            (axDescriptionPattern != nil && !axDescriptionPattern!.isEmpty) ||
+                            (axIdentifierPattern != nil && !axIdentifierPattern!.isEmpty) ||
+                            (axDOMClassList != nil && !axDOMClassList!.isEmpty)
+        
+        if hasAXPatterns {
+            guard let info = axInfo else {
+                // AX patterns specified but no axInfo provided - cannot match
+                return false
+            }
+            
+            // Check AX Role pattern
+            if let rolePattern = axRolePattern, !rolePattern.isEmpty {
+                guard let role = info.role else { return false }
+                if !matchMode.matches(title: role, pattern: rolePattern) {
+                    return false
+                }
+            }
+            
+            // Check AX Description pattern
+            if let descPattern = axDescriptionPattern, !descPattern.isEmpty {
+                guard let desc = info.description else { return false }
+                if !matchMode.matches(title: desc, pattern: descPattern) {
+                    return false
+                }
+            }
+            
+            // Check AX Identifier pattern (matches against EITHER AXIdentifier OR AXDOMIdentifier)
+            // Firefox and web browsers use AXDOMIdentifier for DOM element IDs (e.g., "urlbar-input")
+            if let idPattern = axIdentifierPattern, !idPattern.isEmpty {
+                let identifierMatches = info.identifier.map { matchMode.matches(title: $0, pattern: idPattern) } ?? false
+                let domIdentifierMatches = info.domIdentifier.map { matchMode.matches(title: $0, pattern: idPattern) } ?? false
+                
+                // Match if EITHER identifier matches
+                if !identifierMatches && !domIdentifierMatches {
+                    return false
+                }
+            }
+            
+            // Check AX DOM Class List - match if ANY specified class is present
+            if let requiredClasses = axDOMClassList, !requiredClasses.isEmpty {
+                guard let domClasses = info.domClasses else { return false }
+                let hasMatch = requiredClasses.contains { requiredClass in
+                    domClasses.contains { $0.lowercased().contains(requiredClass.lowercased()) }
+                }
+                if !hasMatch {
+                    return false
+                }
+            }
+        }
+        
+        return true
     }
     
     // MARK: - Codable
     
     enum CodingKeys: String, CodingKey {
         case id, name, bundleIdPattern, titlePattern, matchMode, isEnabled
+        // AX matching patterns
+        case axRolePattern, axDescriptionPattern, axIdentifierPattern, axDOMClassList
+        // Behavior overrides
         case useMarkedText, hasMarkedTextIssues, commitDelay
         case injectionMethod, injectionDelays, textSendingMethod
         case enableForceAccessibility, targetInputSourceId, description
@@ -344,6 +425,14 @@ struct WindowTitleRule: Codable, Identifiable {
         titlePattern = try container.decode(String.self, forKey: .titlePattern)
         matchMode = try container.decode(WindowTitleMatchMode.self, forKey: .matchMode)
         isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
+        
+        // Decode AX matching patterns
+        axRolePattern = try container.decodeIfPresent(String.self, forKey: .axRolePattern)
+        axDescriptionPattern = try container.decodeIfPresent(String.self, forKey: .axDescriptionPattern)
+        axIdentifierPattern = try container.decodeIfPresent(String.self, forKey: .axIdentifierPattern)
+        axDOMClassList = try container.decodeIfPresent([String].self, forKey: .axDOMClassList)
+        
+        // Decode behavior overrides
         useMarkedText = try container.decodeIfPresent(Bool.self, forKey: .useMarkedText)
         hasMarkedTextIssues = try container.decodeIfPresent(Bool.self, forKey: .hasMarkedTextIssues)
         commitDelay = try container.decodeIfPresent(UInt32.self, forKey: .commitDelay)
@@ -377,6 +466,14 @@ struct WindowTitleRule: Codable, Identifiable {
         try container.encode(titlePattern, forKey: .titlePattern)
         try container.encode(matchMode, forKey: .matchMode)
         try container.encode(isEnabled, forKey: .isEnabled)
+        
+        // Encode AX matching patterns
+        try container.encodeIfPresent(axRolePattern, forKey: .axRolePattern)
+        try container.encodeIfPresent(axDescriptionPattern, forKey: .axDescriptionPattern)
+        try container.encodeIfPresent(axIdentifierPattern, forKey: .axIdentifierPattern)
+        try container.encodeIfPresent(axDOMClassList, forKey: .axDOMClassList)
+        
+        // Encode behavior overrides
         try container.encodeIfPresent(useMarkedText, forKey: .useMarkedText)
         try container.encodeIfPresent(hasMarkedTextIssues, forKey: .hasMarkedTextIssues)
         try container.encodeIfPresent(commitDelay, forKey: .commitDelay)
@@ -409,6 +506,12 @@ struct WindowTitleRule: Codable, Identifiable {
         titlePattern: String,
         matchMode: WindowTitleMatchMode,
         isEnabled: Bool = true,
+        // AX matching patterns
+        axRolePattern: String? = nil,
+        axDescriptionPattern: String? = nil,
+        axIdentifierPattern: String? = nil,
+        axDOMClassList: [String]? = nil,
+        // Behavior overrides
         useMarkedText: Bool? = nil,
         hasMarkedTextIssues: Bool? = nil,
         commitDelay: UInt32? = nil,
@@ -425,6 +528,12 @@ struct WindowTitleRule: Codable, Identifiable {
         self.titlePattern = titlePattern
         self.matchMode = matchMode
         self.isEnabled = isEnabled
+        // AX matching patterns
+        self.axRolePattern = axRolePattern
+        self.axDescriptionPattern = axDescriptionPattern
+        self.axIdentifierPattern = axIdentifierPattern
+        self.axDOMClassList = axDOMClassList
+        // Behavior overrides
         self.useMarkedText = useMarkedText
         self.hasMarkedTextIssues = hasMarkedTextIssues
         self.commitDelay = commitDelay
@@ -434,6 +543,32 @@ struct WindowTitleRule: Codable, Identifiable {
         self.enableForceAccessibility = enableForceAccessibility
         self.targetInputSourceId = targetInputSourceId
         self.description = description
+    }
+    
+    /// Check if this rule has any AX-based matching patterns
+    var hasAXPatterns: Bool {
+        return (axRolePattern != nil && !axRolePattern!.isEmpty) ||
+               (axDescriptionPattern != nil && !axDescriptionPattern!.isEmpty) ||
+               (axIdentifierPattern != nil && !axIdentifierPattern!.isEmpty) ||
+               (axDOMClassList != nil && !axDOMClassList!.isEmpty)
+    }
+    
+    /// Get a summary of AX patterns for display
+    var axPatternsSummary: String {
+        var parts: [String] = []
+        if let role = axRolePattern, !role.isEmpty {
+            parts.append("Role: \(role)")
+        }
+        if let desc = axDescriptionPattern, !desc.isEmpty {
+            parts.append("Desc: \(desc)")
+        }
+        if let id = axIdentifierPattern, !id.isEmpty {
+            parts.append("ID: \(id)")
+        }
+        if let classes = axDOMClassList, !classes.isEmpty {
+            parts.append("DOM: [\(classes.joined(separator: ", "))]")
+        }
+        return parts.isEmpty ? "" : parts.joined(separator: ", ")
     }
 }
 
@@ -558,79 +693,59 @@ class AppBehaviorDetector {
         ),
         
         // ============================================
-        // Firefox rules (autocomplete method)
-        // ============================================
-        
-        // Firefox (all windows) - uses autocomplete injection like Spotlight
-        WindowTitleRule(
-            name: "Firefox",
-            bundleIdPattern: "org.mozilla.firefox",
-            titlePattern: "",  // Empty = match all windows
-            matchMode: .contains,
-            useMarkedText: true,
-            hasMarkedTextIssues: false,
-            commitDelay: 3000,
-            injectionMethod: .autocomplete,
-            injectionDelays: [1000, 3000, 1000],
-            textSendingMethod: .chunked,
-            description: "Firefox - dùng autocomplete injection (Forward Delete + backspace + text)"
-        ),
-        
-        // Firefox Developer Edition
-        WindowTitleRule(
-            name: "Firefox Developer Edition",
-            bundleIdPattern: "org.mozilla.firefoxdeveloperedition",
-            titlePattern: "",  // Empty = match all windows
-            matchMode: .contains,
-            useMarkedText: true,
-            hasMarkedTextIssues: false,
-            commitDelay: 3000,
-            injectionMethod: .autocomplete,
-            injectionDelays: [1000, 3000, 1000],
-            textSendingMethod: .chunked,
-            description: "Firefox Developer Edition - dùng autocomplete injection"
-        ),
-        
-        // Firefox Nightly
-        WindowTitleRule(
-            name: "Firefox Nightly",
-            bundleIdPattern: "org.mozilla.nightly",
-            titlePattern: "",  // Empty = match all windows
-            matchMode: .contains,
-            useMarkedText: true,
-            hasMarkedTextIssues: false,
-            commitDelay: 3000,
-            injectionMethod: .autocomplete,
-            injectionDelays: [1000, 3000, 1000],
-            textSendingMethod: .chunked,
-            description: "Firefox Nightly - dùng autocomplete injection"
-        ),
-        
-        // ============================================
-        // Terminal rules
-        // ============================================
-        
-        // Warp Terminal - optimized delays for modern terminal
-        WindowTitleRule(
-            name: "Warp Terminal",
-            bundleIdPattern: "dev.warp.Warp-Stable",
-            titlePattern: "",  // Empty = match all windows
-            matchMode: .contains,
-            useMarkedText: true,
-            hasMarkedTextIssues: false,
-            commitDelay: 5000,
-            injectionMethod: .slow,
-            injectionDelays: [8000, 15000, 8000],
-            textSendingMethod: .chunked,
-            description: "Warp Terminal"
-        ),
-        
-        // ============================================
         // Electron apps
         // ============================================
         
         // Note: Notion Code Block is detected via AXDOMClassList in detectInjectionMethod()
         // Regular Notion text areas use default injection (no rule needed)
+        
+        // ============================================
+        // Firefox Address Bar (AX-based detection)
+        // ============================================
+        
+        // Firefox Address Bar - Selection Method (default, enabled)
+        // Detects via AXIdentifier: "urlbar-input"
+        // Use selection (Select All + Delete + Paste) for reliable text injection
+        WindowTitleRule(
+            name: "Firefox Address Bar (Selection)",
+            bundleIdPattern: "org.mozilla.firefox|org.mozilla.firefoxdeveloperedition|org.mozilla.nightly|org.waterfoxproject.waterfox|io.gitlab.librewolf-community.librewolf|one.ablaze.floorp|org.torproject.torbrowser|net.mullvad.mullvadbrowser",
+            titlePattern: "",  // Match all windows
+            matchMode: .contains,
+            isEnabled: true,
+            axRolePattern: nil,
+            axDescriptionPattern: nil,
+            axIdentifierPattern: "urlbar-input",  // Firefox address bar identifier
+            axDOMClassList: nil,
+            useMarkedText: true,
+            hasMarkedTextIssues: false,
+            commitDelay: 3000,
+            injectionMethod: .selection,
+            injectionDelays: [1000, 3000, 1000],
+            textSendingMethod: .chunked,
+            description: "Firefox Address Bar - using selection method (Select All + Delete + Paste)"
+        ),
+        
+        // Firefox Address Bar - AX Direct Method (alternative, disabled by default)
+        // Alternative method using AX API to set text directly
+        // Enable this if selection method causes issues
+        WindowTitleRule(
+            name: "Firefox Address Bar (AX Direct)",
+            bundleIdPattern: "org.mozilla.firefox|org.mozilla.firefoxdeveloperedition|org.mozilla.nightly|org.waterfoxproject.waterfox|io.gitlab.librewolf-community.librewolf|one.ablaze.floorp|org.torproject.torbrowser|net.mullvad.mullvadbrowser",
+            titlePattern: "",  // Match all windows
+            matchMode: .contains,
+            isEnabled: false,  // Disabled by default - enable to use AX Direct instead of Selection
+            axRolePattern: nil,
+            axDescriptionPattern: nil,
+            axIdentifierPattern: "urlbar-input",  // Firefox address bar identifier
+            axDOMClassList: nil,
+            useMarkedText: true,
+            hasMarkedTextIssues: false,
+            commitDelay: 3000,
+            injectionMethod: .axDirect,
+            injectionDelays: [1000, 3000, 1000],
+            textSendingMethod: .chunked,
+            description: "Firefox Address Bar - using AX Direct method (AX API set value)"
+        ),
     ]
     
     // MARK: - Static App Lists (Single Source of Truth)
@@ -835,8 +950,9 @@ class AppBehaviorDetector {
         let role: String?
         let subrole: String?
         let description: String?
-        let identifier: String?
-        let domClasses: [String]?
+        let identifier: String?       // AXIdentifier
+        let domIdentifier: String?    // AXDOMIdentifier (used by Firefox, Chromium for DOM element ID)
+        let domClasses: [String]?     // AXDOMClassList
         let textValue: String?
         
         /// Check if this element is empty (no text or empty string)
@@ -847,7 +963,7 @@ class AppBehaviorDetector {
         
         static let empty = FocusedElementInfo(
             role: nil, subrole: nil, description: nil,
-            identifier: nil, domClasses: nil, textValue: nil
+            identifier: nil, domIdentifier: nil, domClasses: nil, textValue: nil
         )
     }
     
@@ -878,6 +994,10 @@ class AppBehaviorDetector {
         var identifierVal: CFTypeRef?
         AXUIElementCopyAttributeValue(axEl, kAXIdentifierAttribute as CFString, &identifierVal)
         
+        // AXDOMIdentifier is used by Firefox, Chromium for DOM element ID (e.g., "urlbar-input")
+        var domIdentifierVal: CFTypeRef?
+        AXUIElementCopyAttributeValue(axEl, "AXDOMIdentifier" as CFString, &domIdentifierVal)
+        
         var domClassRef: CFTypeRef?
         AXUIElementCopyAttributeValue(axEl, "AXDOMClassList" as CFString, &domClassRef)
         
@@ -889,6 +1009,7 @@ class AppBehaviorDetector {
             subrole: subroleVal as? String,
             description: descVal as? String,
             identifier: identifierVal as? String,
+            domIdentifier: domIdentifierVal as? String,
             domClasses: domClassRef as? [String],
             textValue: textVal as? String
         )
@@ -898,13 +1019,19 @@ class AppBehaviorDetector {
     
     /// Check if focused element matches Zen-style address bar pattern
     /// Detection methods:
-    /// 1. DOM ID/Identifier: "urlbar-input" (Firefox/Zen Browser standard)
+    /// 1. DOM ID/Identifier: "urlbar-input" (Firefox/Zen Browser standard) - stored in AXDOMIdentifier
     /// 2. AX Description Pattern: "Search with <search_engine> or enter address"
     /// - Returns: true if focused element is a Zen-style address bar
     func isFirefoxStyleAddressBar() -> Bool {
         let info = getFocusedElementInfo()
         
         // Check DOM ID first (most reliable for Firefox-based browsers)
+        // Firefox stores DOM element ID in AXDOMIdentifier, not AXIdentifier
+        if let domId = info.domIdentifier, domId == "urlbar-input" {
+            return true
+        }
+        
+        // Also check AXIdentifier as fallback (for compatibility)
         if let identifier = info.identifier, identifier == "urlbar-input" {
             return true
         }
@@ -1046,21 +1173,34 @@ class AppBehaviorDetector {
         // Note: Empty window title is OK - rules with empty titlePattern will still match
         // This allows rules that apply to all windows of an app (e.g., Firefox rule)
         
+        // Lazy-load AX info only when needed (when a rule has AX patterns)
+        var cachedAXInfo: FocusedElementInfo? = nil
+        func getAXInfo() -> FocusedElementInfo {
+            if cachedAXInfo == nil {
+                cachedAXInfo = getFocusedElementInfo()
+            }
+            return cachedAXInfo!
+        }
+        
         // Search in custom rules first (higher priority)
         for rule in customRules where rule.isEnabled {
-            if rule.matches(bundleId: bundleId, windowTitle: windowTitle) {
+            // Pass AX info only if rule has AX patterns (lazy load)
+            let axInfo = rule.hasAXPatterns ? getAXInfo() : nil
+            if rule.matches(bundleId: bundleId, windowTitle: windowTitle, axInfo: axInfo) {
                 return rule
             }
         }
         
-        // Then search in built-in rules (check disabled list from preferences)
+        // Then search in built-in rules (check disabled list from preferences AND isEnabled flag)
         let disabledBuiltInRules = SharedSettings.shared.getDisabledBuiltInRules()
         for rule in Self.builtInWindowTitleRules {
-            // Skip if rule is disabled in preferences
-            if disabledBuiltInRules.contains(rule.name) {
+            // Skip if rule is disabled by isEnabled flag OR in preferences
+            if !rule.isEnabled || disabledBuiltInRules.contains(rule.name) {
                 continue
             }
-            if rule.matches(bundleId: bundleId, windowTitle: windowTitle) {
+            // Pass AX info only if rule has AX patterns (lazy load)
+            let axInfo = rule.hasAXPatterns ? getAXInfo() : nil
+            if rule.matches(bundleId: bundleId, windowTitle: windowTitle, axInfo: axInfo) {
                 return rule
             }
         }
@@ -1083,16 +1223,26 @@ class AppBehaviorDetector {
         
         var matchingRules: [WindowTitleRule] = []
         
+        // Lazy-load AX info only when needed (when a rule has AX patterns)
+        var cachedAXInfo: FocusedElementInfo? = nil
+        func getAXInfo() -> FocusedElementInfo {
+            if cachedAXInfo == nil {
+                cachedAXInfo = getFocusedElementInfo()
+            }
+            return cachedAXInfo!
+        }
+        
         // FIRST: Search in built-in rules (lower priority - applied first)
         // This allows custom rules to override built-in rules
         let disabledBuiltInRules = SharedSettings.shared.getDisabledBuiltInRules()
         for rule in Self.builtInWindowTitleRules {
-            // Skip if rule is disabled in preferences
-            if disabledBuiltInRules.contains(rule.name) {
+            // Skip if rule is disabled by isEnabled flag OR in preferences
+            if !rule.isEnabled || disabledBuiltInRules.contains(rule.name) {
                 continue
             }
-            let matches = rule.matches(bundleId: bundleId, windowTitle: windowTitle)
-            if matches {
+            // Pass AX info only if rule has AX patterns (lazy load)
+            let axInfo = rule.hasAXPatterns ? getAXInfo() : nil
+            if rule.matches(bundleId: bundleId, windowTitle: windowTitle, axInfo: axInfo) {
                 matchingRules.append(rule)
             }
         }
@@ -1100,7 +1250,9 @@ class AppBehaviorDetector {
         // THEN: Search in custom rules (higher priority - can override)
         // Custom rules are in user-defined order (can be reordered via drag & drop)
         for rule in customRules where rule.isEnabled {
-            if rule.matches(bundleId: bundleId, windowTitle: windowTitle) {
+            // Pass AX info only if rule has AX patterns (lazy load)
+            let axInfo = rule.hasAXPatterns ? getAXInfo() : nil
+            if rule.matches(bundleId: bundleId, windowTitle: windowTitle, axInfo: axInfo) {
                 matchingRules.append(rule)
             }
         }
@@ -1531,20 +1683,10 @@ class AppBehaviorDetector {
                     description: "Dia Address Bar"
                 )
             }
-            
-            // Firefox-style address bar
-            if Self.firefoxBasedBrowsers.contains(bundleId) || Self.axAttributeDetectForBrowsers.contains(bundleId) {
-                if isFirefoxStyleAddressBar() {
-                    let method: InjectionMethod = Self.axAttributeDetectForBrowsers.contains(bundleId) ? .axDirect : .selection
-                    return InjectionMethodInfo(
-                        method: method,
-                        delays: method.defaultDelays,
-                        textSendingMethod: .chunked,
-                        description: "Firefox-style Address Bar"
-                    )
-                }
-            }
         }
+
+        // Note: Firefox address bar is now handled by Window Title Rules with AX matching
+        // Rules match axIdentifierPattern: "urlbar-input" and apply appropriate injection method
 
         // Priority 1: Check Window Title Rules for context-specific injection method (merged cascade)
         let mergedResult = getMergedRuleResult()
@@ -1610,19 +1752,12 @@ class AppBehaviorDetector {
             )
         }
 
-        // Firefox-based browsers - special handling for content area vs address bar
-        // Address bar (AXTextField): use selection method
+        // Firefox-based browsers - content area handling
+        // Address bar is handled by Window Title Rules (axIdentifierPattern: "urlbar-input")
         // Content area (AXWindow): use axDirect method (AX API to set text directly)
         // Note: Selection method in content area interferes with mouse word selection
         if Self.firefoxBasedBrowsers.contains(bundleId) {
-            if role == "AXTextField" {
-                return InjectionMethodInfo(
-                    method: .selection,
-                    delays: InjectionMethod.selection.defaultDelays,
-                    textSendingMethod: .chunked,
-                    description: "Firefox Address Bar"
-                )
-            } else if role == "AXWindow" {
+            if role == "AXWindow" {
                 return InjectionMethodInfo(
                     method: .axDirect,
                     delays: InjectionMethod.axDirect.defaultDelays,
