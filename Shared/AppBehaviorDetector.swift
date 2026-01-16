@@ -1191,11 +1191,23 @@ class AppBehaviorDetector {
             }
         }
         
-        // Then search in built-in rules (check disabled list from preferences AND isEnabled flag)
+        // Then search in built-in rules
+        // Logic: rule is active if:
+        // - rule.isEnabled=true AND not in disabledBuiltInRules (user hasn't disabled it)
+        // - rule.isEnabled=false AND in enabledBuiltInRules (user has explicitly enabled it)
         let disabledBuiltInRules = SharedSettings.shared.getDisabledBuiltInRules()
+        let enabledBuiltInRules = SharedSettings.shared.getEnabledBuiltInRules()
         for rule in Self.builtInWindowTitleRules {
-            // Skip if rule is disabled by isEnabled flag OR in preferences
-            if !rule.isEnabled || disabledBuiltInRules.contains(rule.name) {
+            let isRuleActive: Bool
+            if rule.isEnabled {
+                // Default enabled: skip if user disabled it
+                isRuleActive = !disabledBuiltInRules.contains(rule.name)
+            } else {
+                // Default disabled: only active if user enabled it
+                isRuleActive = enabledBuiltInRules.contains(rule.name)
+            }
+            
+            if !isRuleActive {
                 continue
             }
             // Pass AX info only if rule has AX patterns (lazy load)
@@ -1234,10 +1246,22 @@ class AppBehaviorDetector {
         
         // FIRST: Search in built-in rules (lower priority - applied first)
         // This allows custom rules to override built-in rules
+        // Logic: rule is active if:
+        // - rule.isEnabled=true AND not in disabledBuiltInRules (user hasn't disabled it)
+        // - rule.isEnabled=false AND in enabledBuiltInRules (user has explicitly enabled it)
         let disabledBuiltInRules = SharedSettings.shared.getDisabledBuiltInRules()
+        let enabledBuiltInRules = SharedSettings.shared.getEnabledBuiltInRules()
         for rule in Self.builtInWindowTitleRules {
-            // Skip if rule is disabled by isEnabled flag OR in preferences
-            if !rule.isEnabled || disabledBuiltInRules.contains(rule.name) {
+            let isRuleActive: Bool
+            if rule.isEnabled {
+                // Default enabled: skip if user disabled it
+                isRuleActive = !disabledBuiltInRules.contains(rule.name)
+            } else {
+                // Default disabled: only active if user enabled it
+                isRuleActive = enabledBuiltInRules.contains(rule.name)
+            }
+            
+            if !isRuleActive {
                 continue
             }
             // Pass AX info only if rule has AX patterns (lazy load)
@@ -1374,31 +1398,68 @@ class AppBehaviorDetector {
     }
     
     /// Get all built-in rules with their enabled state from preferences
+    /// Takes into account both default state and user overrides
     func getBuiltInRules() -> [WindowTitleRule] {
         let disabledNames = SharedSettings.shared.getDisabledBuiltInRules()
+        let enabledNames = SharedSettings.shared.getEnabledBuiltInRules()
         return Self.builtInWindowTitleRules.map { rule in
             var mutableRule = rule
-            mutableRule.isEnabled = !disabledNames.contains(rule.name)
+            if rule.isEnabled {
+                // Default enabled: check if user disabled it
+                mutableRule.isEnabled = !disabledNames.contains(rule.name)
+            } else {
+                // Default disabled: check if user enabled it
+                mutableRule.isEnabled = enabledNames.contains(rule.name)
+            }
             return mutableRule
         }
     }
     
     /// Toggle a built-in rule's enabled state
+    /// Handles both rules that are enabled/disabled by default
     func toggleBuiltInRule(_ ruleName: String, enabled: Bool) {
-        var disabledNames = SharedSettings.shared.getDisabledBuiltInRules()
-        if enabled {
-            disabledNames.remove(ruleName)
-        } else {
-            disabledNames.insert(ruleName)
+        // Find the rule to check its default state
+        guard let rule = Self.builtInWindowTitleRules.first(where: { $0.name == ruleName }) else {
+            return
         }
-        SharedSettings.shared.setDisabledBuiltInRules(disabledNames)
+        
+        if rule.isEnabled {
+            // Default enabled: use disabledBuiltInRules to disable
+            var disabledNames = SharedSettings.shared.getDisabledBuiltInRules()
+            if enabled {
+                disabledNames.remove(ruleName)
+            } else {
+                disabledNames.insert(ruleName)
+            }
+            SharedSettings.shared.setDisabledBuiltInRules(disabledNames)
+        } else {
+            // Default disabled: use enabledBuiltInRules to enable
+            var enabledNames = SharedSettings.shared.getEnabledBuiltInRules()
+            if enabled {
+                enabledNames.insert(ruleName)
+            } else {
+                enabledNames.remove(ruleName)
+            }
+            SharedSettings.shared.setEnabledBuiltInRules(enabledNames)
+        }
         clearCache()
     }
     
-    /// Check if a built-in rule is enabled
+    /// Check if a built-in rule is enabled (considering default state and user overrides)
     func isBuiltInRuleEnabled(_ ruleName: String) -> Bool {
-        let disabledNames = SharedSettings.shared.getDisabledBuiltInRules()
-        return !disabledNames.contains(ruleName)
+        guard let rule = Self.builtInWindowTitleRules.first(where: { $0.name == ruleName }) else {
+            return false
+        }
+        
+        if rule.isEnabled {
+            // Default enabled: check if user disabled it
+            let disabledNames = SharedSettings.shared.getDisabledBuiltInRules()
+            return !disabledNames.contains(ruleName)
+        } else {
+            // Default disabled: check if user enabled it
+            let enabledNames = SharedSettings.shared.getEnabledBuiltInRules()
+            return enabledNames.contains(ruleName)
+        }
     }
     
     private func detectBehavior(for bundleId: String) -> AppBehavior {
