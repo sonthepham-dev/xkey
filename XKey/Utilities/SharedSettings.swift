@@ -80,7 +80,8 @@ enum SharedSettingsKey: String {
     // Local data (macros, window title rules)
     case macrosData = "XKey.macrosData"
     case windowTitleRules = "XKey.windowTitleRules"
-    case disabledBuiltInRules = "XKey.disabledBuiltInRules"
+    case disabledBuiltInRules = "XKey.disabledBuiltInRules"        // Rules enabled by default, now disabled by user
+    case enabledBuiltInRules = "XKey.enabledBuiltInRules"          // Rules disabled by default, now enabled by user
     
     // User dictionary (custom words to skip spell check)
     case userDictionaryWords = "XKey.userDictionaryWords"
@@ -570,6 +571,22 @@ class SharedSettings {
     func setDisabledBuiltInRules(_ names: Set<String>) {
         if let data = try? JSONEncoder().encode(Array(names)) {
             writeData(data, forKey: SharedSettingsKey.disabledBuiltInRules.rawValue)
+        }
+    }
+    
+    /// Get the list of enabled built-in rule names (for rules that are disabled by default)
+    func getEnabledBuiltInRules() -> Set<String> {
+        guard let data = readData(forKey: SharedSettingsKey.enabledBuiltInRules.rawValue),
+              let names = try? JSONDecoder().decode([String].self, from: data) else {
+            return []
+        }
+        return Set(names)
+    }
+    
+    /// Set the list of enabled built-in rule names (for rules that are disabled by default)
+    func setEnabledBuiltInRules(_ names: Set<String>) {
+        if let data = try? JSONEncoder().encode(Array(names)) {
+            writeData(data, forKey: SharedSettingsKey.enabledBuiltInRules.rawValue)
         }
     }
     

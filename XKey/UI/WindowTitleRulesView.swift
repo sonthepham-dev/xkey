@@ -284,6 +284,12 @@ struct WindowTitleRulesView: View {
                     titlePattern: rule.titlePattern,
                     matchMode: rule.matchMode,
                     isEnabled: rule.isEnabled,
+                    // AX matching patterns
+                    axRolePattern: rule.axRolePattern,
+                    axDescriptionPattern: rule.axDescriptionPattern,
+                    axIdentifierPattern: rule.axIdentifierPattern,
+                    axDOMClassList: rule.axDOMClassList,
+                    // Behavior overrides
                     useMarkedText: rule.useMarkedText,
                     hasMarkedTextIssues: rule.hasMarkedTextIssues,
                     commitDelay: rule.commitDelay,
@@ -489,6 +495,11 @@ struct RuleRowView: View {
             
             // Behavior badges - use fixedSize to prevent compression
             HStack(spacing: 4) {
+                // AX Patterns badge (show if rule uses AX matching)
+                if rule.hasAXPatterns {
+                    BehaviorBadge(text: "🎯AX", color: .mint)
+                        .help(rule.axPatternsSummary)
+                }
                 // Force Accessibility badge
                 if rule.enableForceAccessibility == true {
                     BehaviorBadge(text: "AX", color: .indigo)
@@ -681,6 +692,13 @@ struct AddRuleSheet: View {
     @State private var availableInputSources: [(id: String, name: String)] = []
     @State private var description: String = ""
     
+    // AX Matching patterns (Phase 1)
+    @State private var showAXPatterns: Bool = false
+    @State private var axRolePattern: String = ""
+    @State private var axDescriptionPattern: String = ""
+    @State private var axIdentifierPattern: String = ""
+    @State private var axDOMClassListText: String = ""  // Comma-separated list
+    
     @State private var showError = false
     @State private var errorMessage = ""
     @State private var showAppPicker = false
@@ -749,13 +767,71 @@ struct AddRuleSheet: View {
                                 }
                                 .labelsHidden()
                                 .frame(width: 150)
-                                .disabled(titlePattern.isEmpty)  // Disable when pattern is empty
+                                .disabled(titlePattern.isEmpty && !showAXPatterns)  // Disable when both patterns are empty
                             }
                             
                             if !titlePattern.isEmpty {
                                 Text(matchModeDescription(matchMode))
                                     .font(.caption2)
                                     .foregroundColor(.secondary)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                    
+                    // AX Matching Patterns (Phase 1)
+                    GroupBox(label: Label("AX Matching (Nâng cao)", systemImage: "accessibility")) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Toggle("Sử dụng AX patterns để match", isOn: $showAXPatterns)
+                            
+                            if showAXPatterns {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text("Cho phép match theo thuộc tính AX của focused element. Dùng Debug > App Detector để xem AX info.")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                    
+                                    HStack {
+                                        Text("AX Role:")
+                                            .frame(width: 100, alignment: .leading)
+                                            .font(.caption)
+                                        TextField("VD: AXTextArea", text: $axRolePattern)
+                                            .textFieldStyle(.roundedBorder)
+                                    }
+                                    
+                                    HStack {
+                                        Text("AX Description:")
+                                            .frame(width: 100, alignment: .leading)
+                                            .font(.caption)
+                                        TextField("VD: Terminal 1", text: $axDescriptionPattern)
+                                            .textFieldStyle(.roundedBorder)
+                                    }
+                                    
+                                    HStack {
+                                        Text("AX Identifier:")
+                                            .frame(width: 100, alignment: .leading)
+                                            .font(.caption)
+                                        TextField("VD: urlbar-input", text: $axIdentifierPattern)
+                                            .textFieldStyle(.roundedBorder)
+                                    }
+                                    
+                                    HStack(alignment: .top) {
+                                        Text("DOM Classes:")
+                                            .frame(width: 100, alignment: .leading)
+                                            .font(.caption)
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            TextField("VD: notranslate, code-block", text: $axDOMClassListText)
+                                                .textFieldStyle(.roundedBorder)
+                                            Text("Phân cách bằng dấu phẩy. Match nếu có BẤT KỲ class nào.")
+                                                .font(.caption2)
+                                                .foregroundColor(.secondary)
+                                        }
+                                    }
+                                    
+                                    Text("⚠️ Match mode cũng áp dụng cho AX patterns. Nếu muốn match chính xác, chọn 'Khớp chính xác'.")
+                                        .font(.caption2)
+                                        .foregroundColor(.orange)
+                                }
+                                .padding(.leading, 20)
                             }
                         }
                         .padding(.vertical, 4)
@@ -951,7 +1027,7 @@ struct AddRuleSheet: View {
             }
         }
         .padding()
-        .frame(width: 520, height: 780)
+        .frame(width: 560, height: 900)
         .onAppear {
             // Load available input sources for the picker
             loadAvailableInputSources()
@@ -1015,6 +1091,17 @@ struct AddRuleSheet: View {
             overrideInputSource = true
             targetInputSourceId = inputSourceId
         }
+        
+        // AX Matching patterns
+        if rule.hasAXPatterns {
+            showAXPatterns = true
+            axRolePattern = rule.axRolePattern ?? ""
+            axDescriptionPattern = rule.axDescriptionPattern ?? ""
+            axIdentifierPattern = rule.axIdentifierPattern ?? ""
+            if let classes = rule.axDOMClassList, !classes.isEmpty {
+                axDOMClassListText = classes.joined(separator: ", ")
+            }
+        }
     }
     
     private func saveRule() {
@@ -1033,12 +1120,30 @@ struct AddRuleSheet: View {
             injectionDelaysArray = [bs, wait, txt]
         }
         
+        // Parse AX DOM Class List from comma-separated text
+        var axDOMClassList: [String]? = nil
+        if showAXPatterns && !axDOMClassListText.isEmpty {
+            axDOMClassList = axDOMClassListText
+                .split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+            if axDOMClassList?.isEmpty == true {
+                axDOMClassList = nil
+            }
+        }
+        
         let rule = WindowTitleRule(
             name: name,
             bundleIdPattern: bundleIdPattern,
             titlePattern: titlePattern,
             matchMode: matchMode,
             isEnabled: true,
+            // AX matching patterns
+            axRolePattern: showAXPatterns && !axRolePattern.isEmpty ? axRolePattern : nil,
+            axDescriptionPattern: showAXPatterns && !axDescriptionPattern.isEmpty ? axDescriptionPattern : nil,
+            axIdentifierPattern: showAXPatterns && !axIdentifierPattern.isEmpty ? axIdentifierPattern : nil,
+            axDOMClassList: axDOMClassList,
+            // Behavior overrides
             useMarkedText: overrideMarkedText ? useMarkedText : nil,
             hasMarkedTextIssues: overrideMarkedText ? hasMarkedTextIssues : nil,
             commitDelay: UInt32(commitDelay) ?? nil as UInt32?,
