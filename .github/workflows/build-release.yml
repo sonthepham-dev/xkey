@@ -32,7 +32,7 @@ env:
 
 jobs:
   build:
-    runs-on: macos-latest  # Apple Silicon runner with Xcode 16
+    runs-on: macos-26  # Apple Silicon macOS 26 Tahoe runner with Xcode 26
     
     steps:
       - name: Checkout repository
