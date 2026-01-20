@@ -139,6 +139,29 @@ class CharacterInjector {
                 debugCallback?("    → Backspace method: delays=\(delays), directPost=\(useDirectPost)")
                 // Forward Delete is only used for .autocomplete method
                 // For slow/fast methods, just send backspaces
+                
+                // SPECIAL CASE: Microsoft Office (Excel/Word/PowerPoint)
+                // Send Forward Delete before backspaces to clear AutoComplete suggestions
+                // Forward Delete clears any highlighted suggestion text after cursor
+                // Note: We use Forward Delete instead of Escape because:
+                // - Escape in Excel CANCELS the entire edit session (loses all typed content)
+                // - Forward Delete only clears text after cursor (the suggestion)
+                //
+                // IMPORTANT: Only send Forward Delete when there's NO real text after cursor.
+                // If user clicked into middle of existing text, Forward Delete would delete
+                // real characters. AutoComplete suggestions are not counted as "real text" by AX API.
+                let isMicrosoftOffice = AppBehaviorDetector.shared.detect() == .microsoftOffice
+                if isMicrosoftOffice && backspaceCount > 0 {
+                    // Check if there's real text after cursor using Accessibility API
+                    let hasRealTextAfter = hasTextAfterCursor() ?? false
+                    if !hasRealTextAfter {
+                        debugCallback?("    → MS Office: sending Forward Delete to clear AutoComplete")
+                        sendForwardDelete(proxy: proxy)
+                        usleep(2000)  // 2ms delay after Forward Delete
+                    } else {
+                        debugCallback?("    → MS Office: skipping Forward Delete (real text after cursor)")
+                    }
+                }
 
                 // Send backspaces immediately, then waits AFTER all backspaces are sent
                 for i in 0..<backspaceCount {
@@ -678,7 +701,7 @@ class CharacterInjector {
             return nil  // AX not supported
         }
 
-        // Extract cursor position
+        // Extract cursor position AND selection length
         var rangeValue = CFRange(location: 0, length: 0)
         guard AXValueGetValue(selectedRange as! AXValue, .cfRange, &rangeValue) else {
             debugCallback?("  [AX] hasTextAfterCursor: Failed to extract range value")
@@ -686,6 +709,7 @@ class CharacterInjector {
         }
 
         let cursorPosition = rangeValue.location
+        let selectionLength = rangeValue.length
 
         // Get total text length
         var numberOfCharacters: CFTypeRef?
@@ -695,10 +719,13 @@ class CharacterInjector {
             return nil  // AX not supported
         }
 
-        let hasTextAfter = cursorPosition < totalLength
-        debugCallback?("  [AX] hasTextAfterCursor: cursor=\(cursorPosition), total=\(totalLength), hasTextAfter=\(hasTextAfter)")
+        // If there's a selection (highlighted text), it's likely AutoComplete suggestion
+        // In this case, we consider it as "no real text after cursor" because
+        // the selected text will be replaced when user continues typing
+        let hasRealTextAfter = cursorPosition + selectionLength < totalLength
+        debugCallback?("  [AX] hasTextAfterCursor: cursor=\(cursorPosition), selection=\(selectionLength), total=\(totalLength), hasRealTextAfter=\(hasRealTextAfter)")
 
-        return hasTextAfter
+        return hasRealTextAfter
     }
 
 

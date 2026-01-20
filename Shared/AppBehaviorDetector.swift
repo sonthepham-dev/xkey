@@ -1800,7 +1800,14 @@ class AppBehaviorDetector {
         
         // Microsoft Office
         if Self.microsoftOfficeApps.contains(bundleId) {
-            if role == "AXTextArea" || role == "AXLayoutArea" {
+            // Use Fast method for all text input areas:
+            // - AXTextArea: Main document/cell editing area
+            // - AXLayoutArea: Excel spreadsheet area
+            // - AXTextField: Dialogs like Data Validation, Find & Replace, etc.
+            // 
+            // Selection method (Shift+Left) doesn't work correctly in some MS Office
+            // dialogs, causing unwanted characters like "+" to appear.
+            if role == "AXTextArea" || role == "AXLayoutArea" || role == "AXTextField" {
                 return InjectionMethodInfo(
                     method: .fast,
                     delays: (2000, 5000, 2000),
@@ -1808,6 +1815,7 @@ class AppBehaviorDetector {
                     description: "Microsoft Office TextArea"
                 )
             }
+            // Other roles (unknown) - fallback to selection for safety
             return InjectionMethodInfo(
                 method: .selection,
                 delays: InjectionMethod.selection.defaultDelays,
