@@ -214,9 +214,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             NSEvent.removeMonitor(monitor)
         }
 
-        // Stop focus observer and timer
-        focusCheckTimer?.invalidate()
-        focusCheckTimer = nil
+        // Stop focus observer
         removeAXObserver()
 
         // Remove app switch observer
@@ -1635,15 +1633,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Always setup notification observer for settings changes
         setupTempOffToolbarSettingsObserver()
         
-        // ALWAYS setup focus monitoring for injection detection (CMD+T, Tab, etc.)
-        // This runs regardless of toolbar setting
+        // Setup AXObserver for focus change monitoring (injection detection)
+        // AXObserver runs regardless of toolbar setting for injection method detection
         setupFocusChangeMonitoring()
 
         let preferences = SharedSettings.shared.loadPreferences()
 
         // Only setup toolbar-specific features if enabled
         guard preferences.tempOffToolbarEnabled else {
-            debugWindowController?.logEvent("Temp off toolbar disabled (focus monitoring still active)")
+            debugWindowController?.logEvent("Temp off toolbar disabled (timer off, AXObserver active)")
             return
         }
 
@@ -1691,9 +1689,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Setup hotkey from preferences
         setupTempOffToolbarHotkey()
 
-        // Note: Focus monitoring is already setup in setupTempOffToolbar()
-        // and runs for injection detection even when toolbar is disabled
-
         debugWindowController?.logEvent("Temp off toolbar enabled")
         
         // Check if user is already focused on a text input and show toolbar immediately
@@ -1704,14 +1699,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Disable temp off toolbar and cleanup
-    /// Note: Focus check timer is NOT stopped - it continues for injection detection
+    /// Note: AXObserver continues for injection detection
     private func disableTempOffToolbar() {
         // Clear hotkey from EventTapManager
         eventTapManager?.toolbarHotkey = nil
         eventTapManager?.onToolbarHotkey = nil
-
-        // Note: focusCheckTimer is NOT stopped here
-        // It continues running for injection detection (CMD+T, etc.)
 
         // Hide toolbar if visible
         TempOffToolbarController.shared.hide()
@@ -1722,7 +1714,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Clear last focused element so re-enable will re-check
         lastFocusedElement = nil
 
-        debugWindowController?.logEvent("Temp off toolbar disabled (focus monitoring still active)")
+        debugWindowController?.logEvent("Temp off toolbar disabled (AXObserver still active)")
     }
 
     /// Setup monitoring for focus changes to auto-show toolbar when focusing text fields
@@ -1737,29 +1729,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self?.handleFocusCheck()
         }
 
-        // Also monitor mouse clicks to detect focus changes within same app
-        // This is already handled by mouseClickMonitor, we just need to hook into it
-        // We'll use a timer to periodically check focus (more reliable backup)
-        setupFocusCheckTimer()
+        // Mouse clicks are already handled by mouseClickMonitor
+        // Focus changes within apps are handled by AXObserver (event-driven, no polling)
         
         // Setup AXObserver for the current frontmost app on launch
-        // This ensures focus changes are monitored immediately
         if let frontApp = NSWorkspace.shared.frontmostApplication {
             setupAXObserverForApp(frontApp)
         }
 
-        debugWindowController?.logEvent("Focus change monitoring enabled (AXObserver + timer backup)")
-    }
-
-    private var focusCheckTimer: Timer?
-
-    private func setupFocusCheckTimer() {
-        focusCheckTimer?.invalidate()
-        // Use 1s interval as backup - AXObserver handles real-time detection
-        // Timer is kept for edge cases where AXObserver might miss events
-        focusCheckTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            self?.handleFocusCheck()
-        }
+        debugWindowController?.logEvent("Focus change monitoring enabled (AXObserver + NSWorkspace notifications)")
     }
     
     /// Main focus check handler - gets focused element once and passes to both processors
@@ -1938,8 +1916,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Update last signature
         lastFocusedElementSignature = currentSignature
         
-        // Also update lastFocusedElement for toolbar tracking
-        lastFocusedElement = element
+        // Check toolbar display (only if enabled)
+        // This ensures toolbar shows/hides when focus changes via keyboard (CMD+T, Tab, etc.)
+        if SharedSettings.shared.tempOffToolbarEnabled {
+            // Reset lastFocusedElement to force toolbar re-evaluation
+            lastFocusedElement = nil
+            checkAndShowToolbarForFocusedElement(element)
+        } else {
+            // Just update for tracking
+            lastFocusedElement = element
+        }
     }
     
     /// Get a signature string for an AX element (used to detect focus changes)
