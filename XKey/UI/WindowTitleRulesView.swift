@@ -661,6 +661,21 @@ struct BehaviorBadge: View {
     }
 }
 
+// MARK: - Tab Selection for AddRuleSheet
+enum RuleSheetTab: String, CaseIterable {
+    case basic = "Cơ bản"
+    case axMatching = "AX Matching"
+    case behavior = "Hành vi"
+    
+    var icon: String {
+        switch self {
+        case .basic: return "info.circle"
+        case .axMatching: return "accessibility"
+        case .behavior: return "slider.horizontal.3"
+        }
+    }
+}
+
 // MARK: - Add/Edit Rule Sheet
 
 @available(macOS 13.0, *)
@@ -671,6 +686,7 @@ struct AddRuleSheet: View {
     
     @Environment(\.dismiss) private var dismiss
     
+    @State private var selectedTab: RuleSheetTab = .basic
     @State private var name: String = ""
     @State private var bundleIdPattern: String = "*"
     @State private var titlePattern: String = ""
@@ -698,6 +714,7 @@ struct AddRuleSheet: View {
     @State private var axDescriptionPattern: String = ""
     @State private var axIdentifierPattern: String = ""
     @State private var axDOMClassListText: String = ""  // Comma-separated list
+    @State private var ruleIsEnabled: Bool = true  // Preserve enabled state when editing
     
     @State private var showError = false
     @State private var errorMessage = ""
@@ -706,305 +723,49 @@ struct AddRuleSheet: View {
     var isEditing: Bool { existingRule != nil }
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 12) {
             // Title
-            Text(isEditing ? "Sửa quy tắc" : "Thêm quy tắc mới")
-                .font(.headline)
+            HStack {
+                Text(isEditing ? "Sửa quy tắc" : "Thêm quy tắc mới")
+                    .font(.headline)
+                Spacer()
+                // Show current rule name if editing
+                if !name.isEmpty {
+                    Text(name)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
+            }
             
             Divider()
             
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    // Basic Info
-                    GroupBox(label: Label("Thông tin cơ bản", systemImage: "info.circle")) {
-                        VStack(alignment: .leading, spacing: 12) {
-                            HStack {
-                                Text("Tên:")
-                                    .frame(width: 100, alignment: .leading)
-                                TextField("VD: Google Docs", text: $name)
-                                    .textFieldStyle(.roundedBorder)
-                            }
-                            
-                            HStack {
-                                Text("Bundle ID:")
-                                    .frame(width: 100, alignment: .leading)
-                                TextField("* = tất cả apps", text: $bundleIdPattern)
-                                    .textFieldStyle(.roundedBorder)
-                                Button(action: { showAppPicker = true }) {
-                                    Label("Chọn app", systemImage: "apps.iphone")
-                                }
-                                .buttonStyle(.bordered)
-                                .controlSize(.small)
-                            }
-                            
-                            Text("Ví dụ: com.apple.Safari hoặc * để match tất cả")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                        }
-                        .padding(.vertical, 4)
-                    }
-                    
-                    GroupBox(label: Label("Pattern matching", systemImage: "text.magnifyingglass")) {
-                        VStack(alignment: .leading, spacing: 12) {
-                            HStack {
-                                Text("Title Pattern:")
-                                    .frame(width: 100, alignment: .leading)
-                                TextField("VD: Google Docs (để trống = tất cả)", text: $titlePattern)
-                                    .textFieldStyle(.roundedBorder)
-                            }
-                            
-                            Text("💡 Để trống Title Pattern để áp dụng cho tất cả windows của app")
-                                .font(.caption2)
-                                .foregroundColor(.orange)
-                            
-                            HStack {
-                                Text("Match mode:")
-                                    .frame(width: 100, alignment: .leading)
-                                Picker("", selection: $matchMode) {
-                                    ForEach(WindowTitleMatchMode.allCases, id: \.self) { mode in
-                                        Text(matchModeDisplayName(mode)).tag(mode)
-                                    }
-                                }
-                                .labelsHidden()
-                                .frame(width: 150)
-                                .disabled(titlePattern.isEmpty && !showAXPatterns)  // Disable when both patterns are empty
-                            }
-                            
-                            if !titlePattern.isEmpty {
-                                Text(matchModeDescription(matchMode))
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-                        .padding(.vertical, 4)
-                    }
-                    
-                    // AX Matching Patterns (Phase 1)
-                    GroupBox(label: Label("AX Matching (Nâng cao)", systemImage: "accessibility")) {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Toggle("Sử dụng AX patterns để match", isOn: $showAXPatterns)
-                            
-                            if showAXPatterns {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    Text("Cho phép match theo thuộc tính AX của focused element. Dùng Debug > App Detector để xem AX info.")
-                                        .font(.caption2)
-                                        .foregroundColor(.secondary)
-                                    
-                                    HStack {
-                                        Text("AX Role:")
-                                            .frame(width: 100, alignment: .leading)
-                                            .font(.caption)
-                                        TextField("VD: AXTextArea", text: $axRolePattern)
-                                            .textFieldStyle(.roundedBorder)
-                                    }
-                                    
-                                    HStack {
-                                        Text("AX Description:")
-                                            .frame(width: 100, alignment: .leading)
-                                            .font(.caption)
-                                        TextField("VD: Terminal 1", text: $axDescriptionPattern)
-                                            .textFieldStyle(.roundedBorder)
-                                    }
-                                    
-                                    HStack {
-                                        Text("AX Identifier:")
-                                            .frame(width: 100, alignment: .leading)
-                                            .font(.caption)
-                                        TextField("VD: urlbar-input", text: $axIdentifierPattern)
-                                            .textFieldStyle(.roundedBorder)
-                                    }
-                                    
-                                    HStack(alignment: .top) {
-                                        Text("DOM Classes:")
-                                            .frame(width: 100, alignment: .leading)
-                                            .font(.caption)
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            TextField("VD: notranslate, code-block", text: $axDOMClassListText)
-                                                .textFieldStyle(.roundedBorder)
-                                            Text("Phân cách bằng dấu phẩy. Match nếu có BẤT KỲ class nào.")
-                                                .font(.caption2)
-                                                .foregroundColor(.secondary)
-                                        }
-                                    }
-                                    
-                                    Text("⚠️ Match mode cũng áp dụng cho AX patterns. Nếu muốn match chính xác, chọn 'Khớp chính xác'.")
-                                        .font(.caption2)
-                                        .foregroundColor(.orange)
-                                }
-                                .padding(.leading, 20)
-                            }
-                        }
-                        .padding(.vertical, 4)
-                    }
-                    
-                    // Force Accessibility for Electron/Chromium apps
-                    Toggle("Bật Force Accessibility (AXManualAccessibility)", isOn: $enableForceAccessibility)
-                    
-                    // Input Source Switching
-                    GroupBox(label: Label("Chuyển Input Source", systemImage: "keyboard")) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Toggle("Tự động chuyển Input Source", isOn: $overrideInputSource)
-                            
-                            if overrideInputSource {
-                                if availableInputSources.isEmpty {
-                                    Text("Đang tải danh sách Input Sources...")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                        .padding(.leading, 20)
-                                } else {
-                                    Picker("Input Source:", selection: $targetInputSourceId) {
-                                        Text("Không chuyển (giữ nguyên)").tag("")
-                                        Divider()
-                                        ForEach(availableInputSources, id: \.id) { source in
-                                            Text(source.name).tag(source.id)
-                                        }
-                                    }
-                                    .padding(.leading, 20)
-                                    
-                                    Text("XKey sẽ tự động chuyển sang Input Source đã chọn.")
-                                        .font(.caption2)
-                                        .foregroundColor(.secondary)
-                                        .padding(.leading, 20)
-                                }
-                            }
-                        }
-                        .padding(.vertical, 4)
-                    }
-                    
-                    // Behavior Overrides
-                    GroupBox(label: Label("Ghi đè behavior", systemImage: "slider.horizontal.3")) {
-                        VStack(alignment: .leading, spacing: 12) {
-                            // Marked text override
-                            Toggle("Ghi đè Marked Text", isOn: $overrideMarkedText)
-                            
-                            if overrideMarkedText {
-                                HStack {
-                                    Toggle("Sử dụng Marked Text (gạch chân)", isOn: $useMarkedText)
-                                }
-                                .padding(.leading, 20)
-                                
-                                Toggle("Có vấn đề với Marked Text", isOn: $hasMarkedTextIssues)
-                                    .padding(.leading, 20)
-                            }
-                            
-                            Divider()
-                            
-                            // Injection method override
-                            Toggle("Ghi đè Injection Method", isOn: $overrideInjection)
-                            
-                            if overrideInjection {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Picker("Method:", selection: $injectionMethod) {
-                                        ForEach(InjectionMethod.allCases, id: \.self) { method in
-                                            Text(method.displayName).tag(method)
-                                        }
-                                    }
-                                    .frame(width: 200)
-                                    .padding(.leading, 20)
-
-                                    Text(injectionMethod.description)
-                                        .font(.caption2)
-                                        .foregroundColor(.secondary)
-                                        .padding(.leading, 20)
-                                }
-                                
-                                // Injection delays (inside overrideInjection)
-                                Toggle("Tùy chỉnh Injection Delays", isOn: $overrideDelays)
-                                    .padding(.leading, 20)
-                                    .padding(.top, 8)
-                                
-                                if overrideDelays {
-                                    VStack(alignment: .leading, spacing: 8) {
-                                        HStack {
-                                            Text("Backspace (µs):")
-                                                .frame(width: 100, alignment: .leading)
-                                                .font(.caption)
-                                            TextField("1000", text: $backspaceDelay)
-                                                .textFieldStyle(.roundedBorder)
-                                                .frame(width: 80)
-                                            Text("Delay sau mỗi backspace")
-                                                .font(.caption2)
-                                                .foregroundColor(.secondary)
-                                        }
-                                        
-                                        HStack {
-                                            Text("Wait (µs):")
-                                                .frame(width: 100, alignment: .leading)
-                                                .font(.caption)
-                                            TextField("3000", text: $waitDelay)
-                                                .textFieldStyle(.roundedBorder)
-                                                .frame(width: 80)
-                                            Text("Delay sau tất cả backspaces")
-                                                .font(.caption2)
-                                                .foregroundColor(.secondary)
-                                        }
-                                        
-                                        HStack {
-                                            Text("Text (µs):")
-                                                .frame(width: 100, alignment: .leading)
-                                                .font(.caption)
-                                            TextField("1500", text: $textDelay)
-                                                .textFieldStyle(.roundedBorder)
-                                                .frame(width: 80)
-                                            Text("Delay giữa các ký tự")
-                                                .font(.caption2)
-                                                .foregroundColor(.secondary)
-                                        }
-                                    }
-                                    .padding(.leading, 40)
-                                    .padding(.top, 4)
-                                }
-                                
-                                // Text Sending Method
-                                Divider()
-                                    .padding(.leading, 20)
-                                    .padding(.vertical, 4)
-                                
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Picker("Phương thức gửi text:", selection: $textSendingMethod) {
-                                        ForEach(TextSendingMethod.allCases, id: \.self) { method in
-                                            Text(method.displayName).tag(method)
-                                        }
-                                    }
-                                    .frame(width: 300)
-                                    .padding(.leading, 20)
-                                    
-                                    Text(textSendingMethod.description)
-                                        .font(.caption2)
-                                        .foregroundColor(.secondary)
-                                        .padding(.leading, 20)
-                                }
-                            }
-                            
-                            Divider()
-                            
-                            // Commit delay
-                            HStack {
-                                Text("Commit Delay (µs):")
-                                    .frame(width: 120, alignment: .leading)
-                                TextField("VD: 5000", text: $commitDelay)
-                                    .textFieldStyle(.roundedBorder)
-                                    .frame(width: 100)
-                                Text("(để trống = mặc định)")
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-                        .padding(.vertical, 4)
-                    }
-                    
-                    // Description
-                    GroupBox(label: Label("Ghi chú", systemImage: "text.alignleft")) {
-                        TextField("Mô tả (tùy chọn)", text: $description)
-                            .textFieldStyle(.roundedBorder)
-                    }
-                    
-                    if showError {
-                        Text(errorMessage)
-                            .foregroundColor(.red)
-                            .font(.caption)
-                    }
+            // Tab Selector
+            Picker("", selection: $selectedTab) {
+                ForEach(RuleSheetTab.allCases, id: \.self) { tab in
+                    Text(tab.rawValue).tag(tab)
                 }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            
+            // Tab Content - Switch-based, no native TabView
+            Group {
+                switch selectedTab {
+                case .basic:
+                    basicInfoTab
+                case .axMatching:
+                    axMatchingTab
+                case .behavior:
+                    behaviorTab
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            
+            // Error message
+            if showError {
+                Text(errorMessage)
+                    .foregroundColor(.red)
+                    .font(.caption)
             }
             
             Divider()
@@ -1018,16 +779,36 @@ struct AddRuleSheet: View {
                 
                 Spacer()
                 
+                // Navigation hints
+                HStack(spacing: 4) {
+                    if selectedTab != .basic {
+                        Button(action: { withAnimation { selectedTab = previousTab } }) {
+                            Label("Quay lại", systemImage: "chevron.left")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                    
+                    if selectedTab != .behavior {
+                        Button(action: { withAnimation { selectedTab = nextTab } }) {
+                            Label("Tiếp theo", systemImage: "chevron.right")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                }
+                
                 Button(isEditing ? "Lưu" : "Thêm") {
                     saveRule()
                 }
                 .keyboardShortcut(.return)
                 .buttonStyle(.borderedProminent)
-                .disabled(name.isEmpty)  // Only name is required, titlePattern can be empty
+                .disabled(name.isEmpty)
             }
         }
         .padding()
-        .frame(width: 560, height: 900)
+        .frame(minHeight: 450, maxHeight: 550)
+        .frame(width: 560)
         .onAppear {
             // Load available input sources for the picker
             loadAvailableInputSources()
@@ -1053,12 +834,346 @@ struct AddRuleSheet: View {
         }
     }
     
+    // MARK: - Tab Navigation Helpers
+    
+    private var previousTab: RuleSheetTab {
+        switch selectedTab {
+        case .basic: return .basic
+        case .axMatching: return .basic
+        case .behavior: return .axMatching
+        }
+    }
+    
+    private var nextTab: RuleSheetTab {
+        switch selectedTab {
+        case .basic: return .axMatching
+        case .axMatching: return .behavior
+        case .behavior: return .behavior
+        }
+    }
+    
+    // MARK: - Tab 1: Basic Info
+    
+    private var basicInfoTab: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                // Basic Info
+                GroupBox(label: Label("Thông tin cơ bản", systemImage: "info.circle")) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Text("Tên:")
+                                .frame(width: 100, alignment: .leading)
+                            TextField("VD: Google Docs", text: $name)
+                                .textFieldStyle(.roundedBorder)
+                        }
+                        
+                        HStack {
+                            Text("Bundle ID:")
+                                .frame(width: 100, alignment: .leading)
+                            TextField("* = tất cả apps", text: $bundleIdPattern)
+                                .textFieldStyle(.roundedBorder)
+                            Button(action: { showAppPicker = true }) {
+                                Label("Chọn app", systemImage: "apps.iphone")
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        }
+                        
+                        Text("Ví dụ: com.apple.Safari hoặc * để match tất cả")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.vertical, 4)
+                }
+                
+                // Pattern matching
+                GroupBox(label: Label("Pattern matching", systemImage: "text.magnifyingglass")) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Text("Title Pattern:")
+                                .frame(width: 100, alignment: .leading)
+                            TextField("VD: Google Docs (để trống = tất cả)", text: $titlePattern)
+                                .textFieldStyle(.roundedBorder)
+                        }
+                        
+                        Text("💡 Để trống Title Pattern để áp dụng cho tất cả windows của app")
+                            .font(.caption2)
+                            .foregroundColor(.orange)
+                        
+                        HStack {
+                            Text("Match mode:")
+                                .frame(width: 100, alignment: .leading)
+                            Picker("", selection: $matchMode) {
+                                ForEach(WindowTitleMatchMode.allCases, id: \.self) { mode in
+                                    Text(matchModeDisplayName(mode)).tag(mode)
+                                }
+                            }
+                            .labelsHidden()
+                            .frame(width: 150)
+                            .disabled(titlePattern.isEmpty && !showAXPatterns)
+                        }
+                        
+                        if !titlePattern.isEmpty {
+                            Text(matchModeDescription(matchMode))
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+                
+                // Description (moved here for basic info)
+                GroupBox(label: Label("Ghi chú", systemImage: "text.alignleft")) {
+                    TextField("Mô tả (tùy chọn)", text: $description)
+                        .textFieldStyle(.roundedBorder)
+                }
+            }
+            .padding(.vertical, 8)
+        }
+    }
+    
+    // MARK: - Tab 2: AX Matching
+    
+    private var axMatchingTab: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                GroupBox(label: Label("AX Matching (Nâng cao)", systemImage: "accessibility")) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Toggle("Sử dụng AX patterns để match", isOn: $showAXPatterns)
+                        
+                        if showAXPatterns {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Cho phép match theo thuộc tính AX của focused element. Dùng Debug > App Detector để xem AX info.")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                
+                                HStack {
+                                    Text("AX Role:")
+                                        .frame(width: 100, alignment: .leading)
+                                        .font(.caption)
+                                    TextField("VD: AXTextArea", text: $axRolePattern)
+                                        .textFieldStyle(.roundedBorder)
+                                }
+                                
+                                HStack {
+                                    Text("AX Description:")
+                                        .frame(width: 100, alignment: .leading)
+                                        .font(.caption)
+                                    TextField("VD: Terminal 1", text: $axDescriptionPattern)
+                                        .textFieldStyle(.roundedBorder)
+                                }
+                                
+                                HStack {
+                                    Text("AX Identifier:")
+                                        .frame(width: 100, alignment: .leading)
+                                        .font(.caption)
+                                    TextField("VD: urlbar-input", text: $axIdentifierPattern)
+                                        .textFieldStyle(.roundedBorder)
+                                }
+                                
+                                HStack(alignment: .top) {
+                                    Text("DOM Classes:")
+                                        .frame(width: 100, alignment: .leading)
+                                        .font(.caption)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        TextField("VD: notranslate, code-block", text: $axDOMClassListText)
+                                            .textFieldStyle(.roundedBorder)
+                                        Text("Phân cách bằng dấu phẩy. Match nếu có BẤT KỲ class nào.")
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
+                                    }
+                                }
+                                
+                                Text("⚠️ Match mode cũng áp dụng cho AX patterns. Nếu muốn match chính xác, chọn 'Khớp chính xác'.")
+                                    .font(.caption2)
+                                    .foregroundColor(.orange)
+                            }
+                            .padding(.leading, 20)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+                
+                // Force Accessibility
+                GroupBox(label: Label("Force Accessibility", systemImage: "hand.raised")) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Toggle("Bật Force Accessibility (AXManualAccessibility)", isOn: $enableForceAccessibility)
+                        
+                        Text("Dùng cho các app Electron/Chromium không expose đầy đủ Accessibility API.")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.vertical, 4)
+                }
+                
+                if !showAXPatterns {
+                    VStack(spacing: 12) {
+                        Image(systemName: "accessibility")
+                            .font(.system(size: 32))
+                            .foregroundColor(.secondary.opacity(0.5))
+                        Text("Bật 'Sử dụng AX patterns' ở trên để cấu hình AX Matching")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 20)
+                }
+            }
+            .padding(.vertical, 8)
+        }
+    }
+    
+    // MARK: - Tab 3: Behavior Overrides
+    
+    private var behaviorTab: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                // Input Source Switching
+                GroupBox(label: Label("Chuyển Input Source", systemImage: "keyboard")) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Toggle("Tự động chuyển Input Source", isOn: $overrideInputSource)
+                        
+                        if overrideInputSource {
+                            if availableInputSources.isEmpty {
+                                Text("Đang tải danh sách Input Sources...")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .padding(.leading, 20)
+                            } else {
+                                Picker("Input Source:", selection: $targetInputSourceId) {
+                                    Text("Không chuyển (giữ nguyên)").tag("")
+                                    Divider()
+                                    ForEach(availableInputSources, id: \.id) { source in
+                                        Text(source.name).tag(source.id)
+                                    }
+                                }
+                                .padding(.leading, 20)
+                                
+                                Text("XKey sẽ tự động chuyển sang Input Source đã chọn.")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                    .padding(.leading, 20)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+                
+                // Marked Text override
+                GroupBox(label: Label("Marked Text", systemImage: "underline")) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Toggle("Ghi đè Marked Text", isOn: $overrideMarkedText)
+                        
+                        if overrideMarkedText {
+                            Toggle("Sử dụng Marked Text (gạch chân)", isOn: $useMarkedText)
+                                .padding(.leading, 20)
+                            
+                            Toggle("Có vấn đề với Marked Text", isOn: $hasMarkedTextIssues)
+                                .padding(.leading, 20)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+                
+                // Injection Method override
+                GroupBox(label: Label("Injection Method", systemImage: "arrow.right.doc.on.clipboard")) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Toggle("Ghi đè Injection Method", isOn: $overrideInjection)
+                        
+                        if overrideInjection {
+                            Picker("Method:", selection: $injectionMethod) {
+                                ForEach(InjectionMethod.allCases, id: \.self) { method in
+                                    Text(method.displayName).tag(method)
+                                }
+                            }
+                            .frame(width: 200)
+                            .padding(.leading, 20)
+                            
+                            Text(injectionMethod.description)
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                                .padding(.leading, 20)
+                            
+                            // Injection delays
+                            Toggle("Tùy chỉnh Injection Delays", isOn: $overrideDelays)
+                                .padding(.leading, 20)
+                                .padding(.top, 4)
+                            
+                            if overrideDelays {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    HStack {
+                                        Text("Backspace (µs):")
+                                            .frame(width: 100, alignment: .leading)
+                                            .font(.caption)
+                                        TextField("1000", text: $backspaceDelay)
+                                            .textFieldStyle(.roundedBorder)
+                                            .frame(width: 80)
+                                    }
+                                    
+                                    HStack {
+                                        Text("Wait (µs):")
+                                            .frame(width: 100, alignment: .leading)
+                                            .font(.caption)
+                                        TextField("3000", text: $waitDelay)
+                                            .textFieldStyle(.roundedBorder)
+                                            .frame(width: 80)
+                                    }
+                                    
+                                    HStack {
+                                        Text("Text (µs):")
+                                            .frame(width: 100, alignment: .leading)
+                                            .font(.caption)
+                                        TextField("1500", text: $textDelay)
+                                            .textFieldStyle(.roundedBorder)
+                                            .frame(width: 80)
+                                    }
+                                }
+                                .padding(.leading, 40)
+                            }
+                            
+                            // Text Sending Method
+                            Divider()
+                                .padding(.leading, 20)
+                                .padding(.vertical, 4)
+                            
+                            Picker("Phương thức gửi text:", selection: $textSendingMethod) {
+                                ForEach(TextSendingMethod.allCases, id: \.self) { method in
+                                    Text(method.displayName).tag(method)
+                                }
+                            }
+                            .frame(width: 300)
+                            .padding(.leading, 20)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+                
+                // Commit delay
+                GroupBox(label: Label("Commit Delay", systemImage: "clock")) {
+                    HStack {
+                        Text("Commit Delay (µs):")
+                            .frame(width: 120, alignment: .leading)
+                        TextField("VD: 5000", text: $commitDelay)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 100)
+                        Text("(để trống = mặc định)")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+            .padding(.vertical, 8)
+        }
+    }
+    
     private func loadExistingRule(_ rule: WindowTitleRule) {
         name = rule.name
         bundleIdPattern = rule.bundleIdPattern
         titlePattern = rule.titlePattern
         matchMode = rule.matchMode
         description = rule.description ?? ""
+        ruleIsEnabled = rule.isEnabled  // Preserve enabled state
         
         if let useMarked = rule.useMarkedText {
             overrideMarkedText = true
@@ -1137,7 +1252,7 @@ struct AddRuleSheet: View {
             bundleIdPattern: bundleIdPattern,
             titlePattern: titlePattern,
             matchMode: matchMode,
-            isEnabled: true,
+            isEnabled: isEditing ? ruleIsEnabled : true,  // Preserve enabled state when editing
             // AX matching patterns
             axRolePattern: showAXPatterns && !axRolePattern.isEmpty ? axRolePattern : nil,
             axDescriptionPattern: showAXPatterns && !axDescriptionPattern.isEmpty ? axDescriptionPattern : nil,

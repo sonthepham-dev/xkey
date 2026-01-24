@@ -251,6 +251,17 @@ class EventTapManager {
             return Unmanaged.passUnretained(event)
         }
 
+        // CRITICAL FIX: Pass through keyUp events IMMEDIATELY with zero delay
+        // This fixes spring-loaded tools in Adobe apps (Illustrator, Photoshop, etc.)
+        // where holding Z/Space temporarily activates Zoom/Hand tool.
+        // These apps require precise keyUp timing to release the tool.
+        // On low-RAM systems, the processing delay through multiple checks below
+        // can cause keyUp to arrive too late, leaving mouse in drag state.
+        // Since XKey only processes keyDown for Vietnamese input, keyUp can bypass safely.
+        if type == .keyUp {
+            return Unmanaged.passUnretained(event)
+        }
+
         debugLogCallback?("EventTapManager.eventCallback: type=\(type.rawValue), delegate=\(delegate != nil)")
 
         // Handle tap disabled event
