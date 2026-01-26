@@ -834,6 +834,12 @@ class AppBehaviorDetector {
         "com.microsoft.Powerpoint"
     ]
     
+    /// Apps that need fast method with oneByOne text sending
+    /// These apps have timing issues with chunked text input
+    static let fastOneByOneApps: Set<String> = [
+        "texstudio"  // TeXstudio - LaTeX editor
+    ]
+    
     // MARK: - Detection Methods
     
     /// Detect app behavior for current frontmost app
@@ -1841,6 +1847,16 @@ class AppBehaviorDetector {
                 delays: (12000, 30000, 6000),
                 textSendingMethod: .oneByOne,
                 description: "Medium Terminal"
+            )
+        }
+        
+        // Apps that need fast method with oneByOne text sending
+        if Self.fastOneByOneApps.contains(bundleId) {
+            return InjectionMethodInfo(
+                method: .fast,
+                delays: InjectionMethod.fast.defaultDelays,
+                textSendingMethod: .oneByOne,
+                description: "Fast + OneByOne"
             )
         }
         
