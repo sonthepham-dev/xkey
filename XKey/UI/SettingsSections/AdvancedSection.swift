@@ -45,6 +45,9 @@ struct AdvancedSection: View {
                                     // Cascade disable: turn off child settings when spell check is disabled
                                     viewModel.preferences.restoreIfWrongSpelling = false
                                     viewModel.preferences.instantRestoreOnWrongSpelling = false
+                                    
+                                    // Clear dictionary cache to free memory (~2-5MB)
+                                    VNDictionaryManager.shared.clearCache()
                                 }
                             }
                         
@@ -249,10 +252,34 @@ struct AdvancedSection: View {
                 }
                 
                 SettingsGroup(title: "Debug") {
-                    VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 10) {
                         Toggle("Bật chế độ Debug", isOn: $viewModel.preferences.debugModeEnabled)
                         
                         Text("Hiển thị cửa sổ debug để theo dõi hoạt động của bộ gõ")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        
+                        Divider()
+                        
+                        // Hotkey setting for debug
+                        HStack {
+                            Text("Phím tắt bật/tắt Debug:")
+                                .font(.caption)
+                            Spacer()
+                            HotkeyRecorderView(hotkey: $viewModel.preferences.debugHotkey, minimumModifiers: 2)
+                                .frame(width: 150)
+                        }
+                        
+                        Text("Nhấn phím tắt này để nhanh chóng bật/tắt cửa sổ Debug từ bất kỳ ứng dụng nào")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        
+                        Divider()
+                        
+                        // Open debug on launch option
+                        Toggle("Tự động mở Debug khi khởi động app", isOn: $viewModel.preferences.openDebugOnLaunch)
+                        
+                        Text("Khi bật, cửa sổ Debug sẽ tự động hiển thị mỗi khi khởi động XKey")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
