@@ -124,18 +124,6 @@ class KeyboardEventHandler: EventTapManager.EventTapDelegate {
             self.debugLogCallback?("Injector: \(message)")
         }
 
-        // Set up callback for engine to get word before cursor via Accessibility API
-        // This is used for spell checking when engine loses context (e.g., after backspace)
-        self.engine.getWordBeforeCursorCallback = { [weak self] in
-            return self?.injector.getTextBeforeCursor()
-        }
-        
-        // Set up callback for context-aware macro checking via Accessibility API
-        // Returns true if macro is a standalone word (space/newline before and after)
-        self.engine.isMacroStandaloneCallback = { [weak self] macroLength in
-            return self?.injector.isMacroStandalone(macroLength: macroLength)
-        }
-
         // Share managers with VNEngine
         VNEngine.setSharedMacroManager(macroManager)
         VNEngine.setSharedSmartSwitchManager(smartSwitchManager)
