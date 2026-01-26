@@ -445,7 +445,9 @@ class XKeyIMController: IMKInputController {
 
         // Check if this is a printable character
         // Use baseChar to check letter status (important for CapsLock)
-        let isPrintable = baseChar.isLetter || character.isNumber || character.isPunctuation
+        // IMPORTANT: Include isSymbol and isMathSymbol for characters like <, >, +, -, =
+        // These are NOT considered isPunctuation in Swift but should trigger word break + commit
+        let isPrintable = baseChar.isLetter || character.isNumber || character.isPunctuation || character.isSymbol || character.isMathSymbol
 
         if !isPrintable {
             // Non-printable - let it pass through
@@ -464,21 +466,32 @@ class XKeyIMController: IMKInputController {
             inputMethod: settings.inputMethod
         )
 
-        // If not processing Vietnamese, commit composition and let it pass through
+        // If not processing Vietnamese, commit composition and insert the character ourselves
+        // IMPORTANT: Don't rely on "return false" to let system insert the character
+        // because some apps may "swallow" the character after marked text is committed
         if !shouldProcessVietnamese {
+            
             if !composingText.isEmpty {
+                // Commit the marked text first
                 commitComposition(client)
                 engine.reset()
                 currentWordLength = 0
                 markedTextStartLocation = NSNotFound
             } else {
                 // Even if no composing text, reset engine to clear buffer
-                // This prevents spell check from restoring when user types special chars
-                // Example: ":d" autocompletes to emoji, then Space should not restore
                 engine.reset()
                 currentWordLength = 0
             }
-            return false
+            
+            // CRITICAL FIX: Insert the special character ourselves
+            // Don't rely on "return false" which may cause the character to be lost
+            // in some apps after marked text is committed
+            client.insertText(
+                String(character),
+                replacementRange: NSRange(location: NSNotFound, length: 0)
+            )
+            
+            return true  // We handled it - don't let system insert again
         }
 
         // Process through Vietnamese engine
@@ -714,11 +727,28 @@ class XKeyIMController: IMKInputController {
         if !composingText.isEmpty {
             // If using marked text, commit it
             if effectiveUseMarkedText {
-                // Insert the final text - this replaces marked text with plain text
-                // Using NSNotFound for location tells the system to replace marked text
+                // IMPORTANT: Use markedRange() to get the actual range of marked text
+                // Using NSNotFound may not work correctly in some apps, causing text to disappear
+                // when typing special characters like <, >, + immediately after marked text
+                let markedRange = client.markedRange()
+                let replacementRange: NSRange
+                if markedRange.location != NSNotFound && markedRange.length > 0 {
+                    // Use the actual marked range for precise replacement
+                    replacementRange = markedRange
+                } else if markedTextStartLocation != NSNotFound {
+                    // Fallback: use tracked start location and composing text length
+                    replacementRange = NSRange(
+                        location: markedTextStartLocation,
+                        length: composingText.utf16.count
+                    )
+                } else {
+                    // Last resort: use NSNotFound (may cause issues in some apps)
+                    replacementRange = NSRange(location: NSNotFound, length: 0)
+                }
+                
                 client.insertText(
                     composingText,
-                    replacementRange: NSRange(location: NSNotFound, length: 0)
+                    replacementRange: replacementRange
                 )
             }
             composingText = ""

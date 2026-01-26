@@ -1998,6 +1998,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // Focus change detection is ONLY for re-detecting injection method.
             // This avoids issues where apps "refine" focus after user starts typing
             // (e.g., VSCode: AXWindow → AXTextArea, Facebook: dropdown menus).
+            
+            // NEW: Notify engine about focus change during typing
+            // This is important for suggestion popup scenarios where keystrokes may go to popup
+            // causing buffer desync. Engine will use AX verify at next word break.
+            keyboardHandler?.engine.notifyFocusChanged()
         }
         
         // Update last signature
@@ -2105,6 +2110,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             
             // NOTE: Engine reset is NOT done here!
             // See checkIntraAppFocusChange for explanation.
+            
+            // NEW: Notify engine about focus change during typing
+            keyboardHandler?.engine.notifyFocusChanged()
         }
         
         // Update last signature

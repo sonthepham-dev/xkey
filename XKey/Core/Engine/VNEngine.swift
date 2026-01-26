@@ -168,6 +168,11 @@ class VNEngine {
     /// of the word being edited (user may be editing middle of an existing word)
     var cursorMovedSinceReset = false
 
+    /// Flag to track when focus change occurred during typing session
+    /// This can happen when suggestion popups appear, causing keystrokes to go to popup
+    /// instead of target input, causing buffer desync. When true, AX verify is used
+    /// at word break to detect and handle desync.
+    var focusChangedDuringTyping = false
 
     
     // MARK: - Logging
@@ -175,6 +180,49 @@ class VNEngine {
     /// Logging callback
     var logCallback: ((String) -> Void)?
 
+    /// Callback to get last word before cursor from screen via Accessibility API
+    /// Returns: The last word on screen, or nil if AX not supported
+    /// Used for verifying buffer matches screen content before restore operations
+    var getLastWordCallback: (() -> String?)?
+
+    /// Verify if buffer content matches screen content
+    /// Returns true if:
+    /// 1. AX is not supported (fallback to trust buffer - many apps don't support AX)
+    /// 2. AX works and screen content matches buffer
+    /// Returns false if:
+    /// - AX works but screen content doesn't match buffer (desync detected)
+    func verifyBufferMatchesScreen() -> Bool {
+        // If no callback configured, assume match (fallback behavior)
+        guard let getLastWord = getLastWordCallback else {
+            logCallback?("verifyBufferMatchesScreen: No callback, assuming match")
+            return true
+        }
+        
+        // Query screen via AX
+        guard let screenWord = getLastWord() else {
+            // AX not supported - assume match (as per user's requirement)
+            logCallback?("verifyBufferMatchesScreen: AX not supported, assuming match")
+            return true
+        }
+        
+        // Get expected word from buffer
+        let bufferWord = getCurrentWord()
+        
+        // Compare
+        if screenWord == bufferWord {
+            logCallback?("verifyBufferMatchesScreen: MATCH - screen='\(screenWord)', buffer='\(bufferWord)'")
+            return true
+        } else if screenWord.hasSuffix(bufferWord) && !bufferWord.isEmpty {
+            // Screen has more text (e.g., "thừa" on screen, "ừa" in buffer)
+            // This means user clicked mid-word and buffer doesn't have full info
+            // DO NOT allow restore as we can't restore correctly
+            logCallback?("verifyBufferMatchesScreen: PARTIAL MATCH - screen='\(screenWord)' ends with buffer='\(bufferWord)' - SKIPPING restore (incomplete buffer)")
+            return false
+        } else {
+            logCallback?("verifyBufferMatchesScreen: MISMATCH - screen='\(screenWord)', buffer='\(bufferWord)'")
+            return false
+        }
+    }
 
 
     // MARK: - Hook State (result to send back)
@@ -379,13 +427,25 @@ class VNEngine {
             specialChar.removeLast()
             logCallback?("  → Removed special char, remaining=\(specialChar.count)")
             if specialChar.isEmpty {
-                restoreLastTypingState()
+                // Verify before restore to prevent desync issues
+                if verifyBufferMatchesScreen() {
+                    restoreLastTypingState()
+                } else {
+                    logCallback?("  → SKIP restore: AX detected buffer-screen mismatch")
+                    clearWithoutRestore()
+                }
             }
         } else if spaceCount > 0 {
             spaceCount -= 1
             logCallback?("  → Removed space, remaining=\(spaceCount)")
             if spaceCount == 0 {
-                restoreLastTypingState()
+                // Verify before restore to prevent desync issues
+                if verifyBufferMatchesScreen() {
+                    restoreLastTypingState()
+                } else {
+                    logCallback?("  → SKIP restore: AX detected buffer-screen mismatch")
+                    clearWithoutRestore()
+                }
             }
         } else {
             if !buffer.isEmpty {
@@ -406,26 +466,43 @@ class VNEngine {
             hookState.extCode = 2
 
             if buffer.isEmpty {
-                logCallback?("  → Buffer empty, restoring...")
+                logCallback?("  → Buffer empty, checking restore conditions...")
                 startNewSession()
                 specialChar.removeAll()
                 
-                // CRITICAL: Only restore from history if cursor hasn't been moved
-                // If cursor was moved (click, arrow keys, app switch), history may contain
-                // stale data that doesn't match the actual screen content.
-                // Restoring in this case causes buffer desync (buffer has "tl" but screen has space).
+                // CRITICAL: Multi-layer check before restore
+                // Layer 1: Check if cursor was moved (basic desync indicator)
                 if cursorMovedSinceReset {
                     logCallback?("  → SKIP restore: cursor was moved, history may be stale")
-                    history.clear()  // Clear stale history to prevent future desync
+                    history.clear()
                 } else {
-                    restoreLastTypingState()
+                    // Layer 2: Verify with AX if buffer actually matches screen
+                    // This catches desync cases that cursorMovedSinceReset misses
+                    // (e.g., app autocomplete, undo, programmatic text changes)
+                    if verifyBufferMatchesScreen() {
+                        restoreLastTypingState()
+                    } else {
+                        logCallback?("  → SKIP restore: AX detected buffer-screen mismatch")
+                        history.clear()  // Clear stale history
+                    }
                 }
             } else {
                 checkGrammar(deltaBackSpace: 1)
             }
         }
     }
+
+    /// Clear session without restoring from history
+    /// Used when desync is detected to prevent incorrect text insertion
+    private func clearWithoutRestore() {
+        startNewSession()
+        history.clear()
+        specialChar.removeAll()
+        spaceCount = 0
+        logCallback?("clearWithoutRestore: Session cleared due to desync")
+    }
     
+
     // MARK: - Normal Key Handling
     
     private func handleNormalKey(keyCode: UInt16, character: Character, isCaps: Bool) {
@@ -1343,6 +1420,9 @@ class VNEngine {
         logCallback?("insertKey: keyCode=\(keyCode)\(charDisplay), isCaps=\(isCaps), count=\(buffer.count)")
 
         buffer.append(keyCode: keyCode, isCaps: isCaps)
+        
+        // Record keystroke in actual typing order (for restore at word break)
+        buffer.recordKeystroke(RawKeystroke(keyCode: keyCode, isCaps: isCaps))
 
         logCallback?("  → After insert: count=\(buffer.count)")
 
@@ -1367,15 +1447,22 @@ class VNEngine {
 
     /// Record a raw keystroke as modifier (for Telex sequences like aa→â)
     /// Adds to the LAST entry in buffer
+    /// Also records to keystrokeSequence for correct restore order
     func insertState(keyCode: UInt16, isCaps: Bool) {
-        buffer.addModifierToLast(RawKeystroke(keyCode: keyCode, isCaps: isCaps))
+        let keystroke = RawKeystroke(keyCode: keyCode, isCaps: isCaps)
+        buffer.addModifierToLast(keystroke)
+        buffer.recordKeystroke(keystroke)  // Record in actual typing order
     }
     
     /// Record a raw keystroke as modifier at a specific buffer index
     /// Use this when the modified entry is NOT the last one (e.g., mark on first vowel of "ưa")
+    /// Also records to keystrokeSequence for correct restore order
     func insertStateAt(index: Int, keyCode: UInt16, isCaps: Bool) {
-        buffer.addModifier(at: index, keystroke: RawKeystroke(keyCode: keyCode, isCaps: isCaps))
+        let keystroke = RawKeystroke(keyCode: keyCode, isCaps: isCaps)
+        buffer.addModifier(at: index, keystroke: keystroke)
+        buffer.recordKeystroke(keystroke)  // Record in actual typing order
     }
+
     
     private var isChanged = false
     
@@ -2761,7 +2848,7 @@ class VNEngine {
         for data in specialChar {
             entries.append(CharacterEntry(fromLegacy: data))
         }
-        let snapshot = BufferSnapshot(entries: entries, overflow: [])
+        let snapshot = BufferSnapshot(entries: entries, overflow: [], keystrokeSequence: [])
         history.save(snapshot)
         specialChar.removeAll()
     }
@@ -2939,6 +3026,7 @@ class VNEngine {
         vCheckSpelling = useSpellCheckingBefore ? 1 : 0
         willTempOffEngine = false
         cursorMovedSinceReset = false
+        focusChangedDuringTyping = false
     }
 
     /// Reset engine with cursor movement flag set
@@ -2949,6 +3037,18 @@ class VNEngine {
         cursorMovedSinceReset = true
         logCallback?("resetWithCursorMoved: cursor moved flag set")
     }
+    
+    /// Notify engine that focus changed during typing session
+    /// This can happen when suggestion popups appear - keystrokes may go to popup
+    /// causing buffer desync. AX verify will be used at next word break.
+    func notifyFocusChanged() {
+        // Only set flag if we're currently typing (have content in buffer)
+        if !buffer.isEmpty {
+            focusChangedDuringTyping = true
+            logCallback?("notifyFocusChanged: focus changed during typing, will verify with AX")
+        }
+    }
+
 
     /// Get current typing word as string (for debugging and display)
     func getCurrentWord() -> String {
@@ -3170,85 +3270,119 @@ extension VNEngine {
         // AND no macro was found above
         // Also skip if spelling is temporarily off via toolbar
         // Trigger restore on space, comma, or period
-        // NOTE: When cursor was moved (cursorMovedSinceReset=true), skip restore because
-        // engine may have lost context. This is the behavior of traditional input methods.
-        if isRestoreTrigger && vCheckSpelling == 1 && vRestoreIfWrongSpelling == 1 && vTempOffSpelling == 0 && !cursorMovedSinceReset {
-            let wordToCheck = getCurrentWord()
+        //
+        // AX VERIFY OPTIMIZATION:
+        // Only call AX verify when potentially desynced:
+        // 1. cursorMovedSinceReset=true (user clicked/moved cursor)
+        // 2. focusChangedDuringTyping=true (suggestion popup stole focus)
+        // Normal typing: no AX call needed - buffer is guaranteed correct
+        if isRestoreTrigger && vCheckSpelling == 1 && vRestoreIfWrongSpelling == 1 && vTempOffSpelling == 0 {
+            // Check if we should proceed with restore check
+            var shouldCheckRestore = true
             
-            // Check if the word is valid Vietnamese
-            let isValidWord = checkWordSpelling(word: wordToCheck)
-            logCallback?("processWordBreak: wordToCheck='\(wordToCheck)', isValid=\(isValidWord)")
-
-            if !isValidWord {
-                // Not using AX - check if word has Vietnamese processing
-                // If word has tone marks/diacritics and is not in dictionary, restore it
-                // This fixes the issue where phonetically valid but meaningless words
-                // like "xỷ" weren't being restored because checkSpelling() only checks phonetic
-                let hasVietnameseChars = hasVietnameseProcessing()
-                if hasVietnameseChars {
-                    // Word has Vietnamese characters but is not valid - restore it
-                    tempDisableKey = true
-                    logCallback?("processWordBreak: Dictionary check failed for Vietnamese word '\(wordToCheck)', forcing restore")
-                } else if !tempDisableKey {
-                    // Word doesn't have Vietnamese characters, use phonetic check
-                    checkSpelling(forceCheckVowel: true)
+            // CASE 1: Cursor was moved (mouse click, arrow keys, etc.)
+            // Buffer was reset and doesn't have full context of existing word on screen
+            // Example: Screen has "ch", user types "ính" → buffer="ính" but screen="chính"
+            // Restoring "ính" would produce "chinhs" which is wrong!
+            if cursorMovedSinceReset {
+                logCallback?("processWordBreak: cursorMovedSinceReset=true, skipping restore (buffer doesn't have full context)")
+                shouldCheckRestore = false
+            }
+            // CASE 2: Focus changed during typing (suggestion popup scenario)
+            // Use AX to verify buffer matches screen before restoring
+            else if focusChangedDuringTyping {
+                // Use AX to verify buffer matches screen
+                if verifyBufferMatchesScreen() {
+                    logCallback?("processWordBreak: AX verified buffer matches screen after focus change, allowing restore check")
+                    shouldCheckRestore = true
+                } else {
+                    logCallback?("processWordBreak: AX detected mismatch after focus change, skipping restore")
+                    shouldCheckRestore = false
                 }
+                // Reset flag after verification
+                focusChangedDuringTyping = false
+            }
+            // CASE 3: Normal typing - no AX needed, buffer is correct
 
-                // IMPORTANT: Skip restore if word has no Vietnamese processing
-                // This handles the case where user manually restored via toggle key (e.g., 'd' to revert 'đ' to 'd')
-                // In this case, tempDisableKey=true but the word is now plain text - no need to restore again
-                // Example: "ddi" -> user typed 'd' to restore 'đ' -> "did" (plain text) -> space should NOT restore to "ddi"
-                let hasVNProcessing = hasVietnameseProcessing()
-                if tempDisableKey && hasVNProcessing {
-                    logCallback?("processWordBreak: Word invalid, attempting restore...")
-                    if checkRestoreIfWrongSpelling(handleCode: vRestore) {
-                        logCallback?("processWordBreak: Restore successful")
+            
+            if shouldCheckRestore {
+                let wordToCheck = getCurrentWord()
+                
+                // Check if the word is valid Vietnamese
+                let isValidWord = checkWordSpelling(word: wordToCheck)
+                logCallback?("processWordBreak: wordToCheck='\(wordToCheck)', isValid=\(isValidWord)")
 
-                        // IMPORTANT: After restore, check if restored word is a macro
-                        // Example: "intẻ" (invalid) restored to "inter" which may be a macro
-                        if shouldUseMacro() {
-                            // Rebuild macroKey from keyStates (original keystrokes)
-                            var restoredMacroKey = [UInt32]()
-                            for i in 0..<Int(stateIndex) {
-                                restoredMacroKey.append(keyStates[i])
-                            }
+                if !isValidWord {
+                    // Not using AX - check if word has Vietnamese processing
+                    // If word has tone marks/diacritics and is not in dictionary, restore it
+                    // This fixes the issue where phonetically valid but meaningless words
+                    // like "xỷ" weren't being restored because checkSpelling() only checks phonetic
+                    let hasVietnameseChars = hasVietnameseProcessing()
+                    if hasVietnameseChars {
+                        // Word has Vietnamese characters but is not valid - restore it
+                        tempDisableKey = true
+                        logCallback?("processWordBreak: Dictionary check failed for Vietnamese word '\(wordToCheck)', forcing restore")
+                    } else if !tempDisableKey {
+                        // Word doesn't have Vietnamese characters, use phonetic check
+                        checkSpelling(forceCheckVowel: true)
+                    }
 
-                            if !restoredMacroKey.isEmpty {
-                                // Save the original backspace count from restore operation
-                                // This is the number of characters on screen (transformed text like "intẻ")
-                                let originalBackspaceCount = hookState.backspaceCount
+                    // IMPORTANT: Skip restore if word has no Vietnamese processing
+                    // This handles the case where user manually restored via toggle key (e.g., 'd' to revert 'đ' to 'd')
+                    // In this case, tempDisableKey=true but the word is now plain text - no need to restore again
+                    // Example: "ddi" -> user typed 'd' to restore 'đ' -> "did" (plain text) -> space should NOT restore to "ddi"
+                    let hasVNProcessing = hasVietnameseProcessing()
+                    if tempDisableKey && hasVNProcessing {
+                        logCallback?("processWordBreak: Word invalid, attempting restore...")
+                        if checkRestoreIfWrongSpelling(handleCode: vRestore) {
+                            logCallback?("processWordBreak: Restore successful")
 
-                                hookState.macroKey = restoredMacroKey
-                                logCallback?("processWordBreak: After restore, checking macro with keyStates (count=\(restoredMacroKey.count))")
+                            // IMPORTANT: After restore, check if restored word is a macro
+                            // Example: "intẻ" (invalid) restored to "inter" which may be a macro
+                            if shouldUseMacro() {
+                                // Rebuild macroKey from keyStates (original keystrokes)
+                                var restoredMacroKey = [UInt32]()
+                                for i in 0..<Int(stateIndex) {
+                                    restoredMacroKey.append(keyStates[i])
+                                }
 
-                                if findAndReplaceMacro() {
-                                    // Macro found - need to fix backspaceCount
-                                    // findAndReplaceMacro sets backspaceCount = macroKey.count (original keystrokes)
-                                    // But text on screen is transformed text, so we need original backspaceCount
-                                    hookState.backspaceCount = originalBackspaceCount
-                                    logCallback?("processWordBreak: Macro found after restore! Using backspaceCount=\(originalBackspaceCount)")
+                                if !restoredMacroKey.isEmpty {
+                                    // Save the original backspace count from restore operation
+                                    // This is the number of characters on screen (transformed text like "intẻ")
+                                    let originalBackspaceCount = hookState.backspaceCount
 
-                                    let result = convertHookStateToResult(hookState, currentKeyCode: nil, currentCharacter: character, isUppercase: false)
-                                    reset()
-                                    return result
+                                    hookState.macroKey = restoredMacroKey
+                                    logCallback?("processWordBreak: After restore, checking macro with keyStates (count=\(restoredMacroKey.count))")
+
+                                    if findAndReplaceMacro() {
+                                        // Macro found - need to fix backspaceCount
+                                        // findAndReplaceMacro sets backspaceCount = macroKey.count (original keystrokes)
+                                        // But text on screen is transformed text, so we need original backspaceCount
+                                        hookState.backspaceCount = originalBackspaceCount
+                                        logCallback?("processWordBreak: Macro found after restore! Using backspaceCount=\(originalBackspaceCount)")
+
+                                        let result = convertHookStateToResult(hookState, currentKeyCode: nil, currentCharacter: character, isUppercase: false)
+                                        reset()
+                                        return result
+                                    }
                                 }
                             }
-                        }
 
-                        // No macro found, return restore result
-                        logCallback?("processWordBreak: No macro, returning restore result")
-                        let result = convertHookStateToResult(hookState, currentKeyCode: nil, currentCharacter: character, isUppercase: false)
-                        // Reset after restore - use reset() instead of just startNewSession()
-                        // This clears typingStates to prevent old words from appearing when backspacing
-                        // Without this, backspacing after restore would bring back old words from typingStates
-                        reset()
-                        spaceCount = 1
-                        return result
+                            // No macro found, return restore result
+                            logCallback?("processWordBreak: No macro, returning restore result")
+                            let result = convertHookStateToResult(hookState, currentKeyCode: nil, currentCharacter: character, isUppercase: false)
+                            // Reset after restore - use reset() instead of just startNewSession()
+                            // This clears typingStates to prevent old words from appearing when backspacing
+                            // Without this, backspacing after restore would bring back old words from typingStates
+                            reset()
+                            spaceCount = 1
+                            return result
+                        }
+                    } else if tempDisableKey && !hasVNProcessing {
+                        // User manually restored via toggle key (e.g., 'd' to revert 'đ' to 'd')
+                        // Word is now plain text, no need to restore again
+                        logCallback?("processWordBreak: Skipping restore - word has no Vietnamese processing (manually restored)")
                     }
-                } else if tempDisableKey && !hasVNProcessing {
-                    // User manually restored via toggle key (e.g., 'd' to revert 'đ' to 'd')
-                    // Word is now plain text, no need to restore again
-                    logCallback?("processWordBreak: Skipping restore - word has no Vietnamese processing (manually restored)")
                 }
             }
         }

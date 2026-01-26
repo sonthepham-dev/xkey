@@ -155,10 +155,11 @@ extension VNEngine {
 
         logCallback?("Upper Case First Char: Applied")
     }
-    
     // MARK: - Restore If Wrong Spelling
 
     /// Check and restore if word has wrong spelling
+    /// NOTE: Caller (processWordBreak) is responsible for verifying buffer matches screen
+    /// before calling this function. Do NOT add duplicate verify here.
     @discardableResult
     func checkRestoreIfWrongSpelling(handleCode: Int) -> Bool {
         guard tempDisableKey else { return false }
@@ -169,15 +170,20 @@ extension VNEngine {
             return false
         }
 
-        // Get all raw keystrokes from buffer
-        let originalKeystrokes = buffer.getAllRawKeystrokes()
+        // NOTE: AX verification is done by caller (processWordBreak/handleDelete)
+        // Do not duplicate the check here to avoid double AX queries
+
+        // Get keystrokes in ACTUAL typing order (not per-entry modifier order)
+        // This ensures restore produces correct character sequence
+        // Example: "thưef" typed as [t,h,u,w,e,f] should restore to "thuwef", not "thuwfe"
+        let originalKeystrokes = buffer.getKeystrokeSequence()
         guard !originalKeystrokes.isEmpty else { return false }
 
         hookState.code = UInt8(handleCode)
         hookState.backspaceCount = buffer.count
         hookState.newCharCount = originalKeystrokes.count
 
-        // Set original characters to send
+        // Set original characters to send (in reverse order for charData)
         for (i, keystroke) in originalKeystrokes.enumerated() {
             var charCode = UInt32(keystroke.keyCode)
             if keystroke.isCaps {
@@ -186,7 +192,7 @@ extension VNEngine {
             hookState.charData[originalKeystrokes.count - 1 - i] = charCode
         }
 
-        logCallback?("Restore Wrong Spelling: Restoring \(originalKeystrokes.count) chars")
+        logCallback?("Restore Wrong Spelling: Restoring \(originalKeystrokes.count) chars in actual typing order")
 
         if handleCode == vRestoreAndStartNewSession {
             reset()
@@ -194,6 +200,7 @@ extension VNEngine {
 
         return true
     }
+
 
     // MARK: - Special Pattern Detection
 

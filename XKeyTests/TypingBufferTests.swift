@@ -295,7 +295,7 @@ class TypingBufferTests: XCTestCase {
         // Create a snapshot with overflow containing 't'
         let overflowEntry = CharacterEntry(keyCode: VietnameseData.KEY_T, isCaps: false)
         let entries = [CharacterEntry](repeating: CharacterEntry(keyCode: VietnameseData.KEY_A, isCaps: false), count: 5)
-        let snapshot = BufferSnapshot(entries: entries, overflow: [overflowEntry])
+        let snapshot = BufferSnapshot(entries: entries, overflow: [overflowEntry], keystrokeSequence: [])
 
         // Restore from snapshot
         buffer.restore(from: snapshot)
@@ -336,7 +336,7 @@ class TypingBufferTests: XCTestCase {
             CharacterEntry(keyCode: VietnameseData.KEY_L, isCaps: false),
             CharacterEntry(keyCode: VietnameseData.KEY_A, isCaps: false)
         ]
-        let snapshot = BufferSnapshot(entries: entries, overflow: [overflowEntry])
+        let snapshot = BufferSnapshot(entries: entries, overflow: [overflowEntry], keystrokeSequence: [])
 
         buffer.restore(from: snapshot)
 
@@ -457,7 +457,7 @@ class TypingHistoryTests: XCTestCase {
 
     func testSaveSnapshot() {
         let entries = [CharacterEntry(keyCode: VietnameseData.KEY_A, isCaps: false)]
-        let snapshot = BufferSnapshot(entries: entries, overflow: [])
+        let snapshot = BufferSnapshot(entries: entries, overflow: [], keystrokeSequence: [])
 
         history.save(snapshot)
 
@@ -467,7 +467,7 @@ class TypingHistoryTests: XCTestCase {
 
     func testPopLast() {
         let entries = [CharacterEntry(keyCode: VietnameseData.KEY_A, isCaps: false)]
-        let snapshot = BufferSnapshot(entries: entries, overflow: [])
+        let snapshot = BufferSnapshot(entries: entries, overflow: [], keystrokeSequence: [])
 
         history.save(snapshot)
         let popped = history.popLast()
@@ -512,7 +512,7 @@ class BufferSnapshotTests: XCTestCase {
             CharacterEntry(keyCode: VietnameseData.KEY_A, isCaps: false),
             CharacterEntry(keyCode: VietnameseData.KEY_B, isCaps: true)
         ]
-        let snapshot = BufferSnapshot(entries: entries, overflow: [])
+        let snapshot = BufferSnapshot(entries: entries, overflow: [], keystrokeSequence: [])
 
         XCTAssertEqual(snapshot.count, 2)
         XCTAssertEqual(snapshot.firstKeyCode, VietnameseData.KEY_A)
@@ -520,12 +520,12 @@ class BufferSnapshotTests: XCTestCase {
 
     func testIsSpace() {
         let spaceEntry = CharacterEntry(keyCode: VietnameseData.KEY_SPACE, isCaps: false)
-        let spaceSnapshot = BufferSnapshot(entries: [spaceEntry], overflow: [])
+        let spaceSnapshot = BufferSnapshot(entries: [spaceEntry], overflow: [], keystrokeSequence: [])
 
         XCTAssertTrue(spaceSnapshot.isSpace)
 
         let normalEntry = CharacterEntry(keyCode: VietnameseData.KEY_A, isCaps: false)
-        let normalSnapshot = BufferSnapshot(entries: [normalEntry], overflow: [])
+        let normalSnapshot = BufferSnapshot(entries: [normalEntry], overflow: [], keystrokeSequence: [])
 
         XCTAssertFalse(normalSnapshot.isSpace)
     }
@@ -567,5 +567,635 @@ class RawKeystrokeTests: XCTestCase {
 
         XCTAssertEqual(k1, k2)
         XCTAssertNotEqual(k1, k3)
+    }
+}
+
+// MARK: - Keystroke Sequence Tests
+
+/// Tests for keystroke sequence tracking in TypingBuffer
+/// Ensures correct order is maintained for restore functionality
+class KeystrokeSequenceTests: XCTestCase {
+    
+    var buffer: TypingBuffer!
+    
+    override func setUp() {
+        super.setUp()
+        buffer = TypingBuffer()
+    }
+    
+    override func tearDown() {
+        buffer = nil
+        super.tearDown()
+    }
+    
+    // MARK: - Basic Append Tests
+    
+    /// Test that recording keystroke adds to sequence
+    func testRecordKeystrokeAddsToSequence() {
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x11, isCaps: false))  // t
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x04, isCaps: false))  // h
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x20, isCaps: false))  // u
+        
+        let sequence = buffer.getKeystrokeSequence()
+        XCTAssertEqual(sequence.count, 3)
+        XCTAssertEqual(sequence[0].keyCode, 0x11)  // t
+        XCTAssertEqual(sequence[1].keyCode, 0x04)  // h
+        XCTAssertEqual(sequence[2].keyCode, 0x20)  // u
+    }
+    
+    /// Test keystrokeSequenceCount property
+    func testKeystrokeSequenceCount() {
+        XCTAssertEqual(buffer.keystrokeSequenceCount, 0)
+        
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x11, isCaps: false))
+        XCTAssertEqual(buffer.keystrokeSequenceCount, 1)
+        
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x04, isCaps: false))
+        XCTAssertEqual(buffer.keystrokeSequenceCount, 2)
+    }
+    
+    // MARK: - Modifier Order Tests
+    
+    /// Test critical case: "thưef" where f modifies ư but typed after e
+    /// keystrokeSequence should maintain typing order: t, h, u, w, e, f
+    /// Even though f is a modifier for ư (entry at index 2)
+    func testModifierAtOldEntryMaintainsTypingOrder() {
+        // Simulate typing "thưef" where f modifies ư
+        
+        // t
+        buffer.append(keyCode: 0x11, isCaps: false)
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x11, isCaps: false))
+        
+        // h
+        buffer.append(keyCode: 0x04, isCaps: false)
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x04, isCaps: false))
+        
+        // u
+        buffer.append(keyCode: 0x20, isCaps: false)
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x20, isCaps: false))
+        
+        // w (modifier to u → ư)
+        buffer.addModifier(at: 2, keystroke: RawKeystroke(keyCode: 0x0D, isCaps: false))
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x0D, isCaps: false))
+        
+        // e (new entry)
+        buffer.append(keyCode: 0x0E, isCaps: false)
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x0E, isCaps: false))
+        
+        // f (modifier to ư at index 2, typed AFTER e)
+        buffer.addModifier(at: 2, keystroke: RawKeystroke(keyCode: 0x03, isCaps: false))
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x03, isCaps: false))
+        
+        // Verify keystrokeSequence maintains typing order
+        let sequence = buffer.getKeystrokeSequence()
+        XCTAssertEqual(sequence.count, 6)
+        XCTAssertEqual(sequence[0].keyCode, 0x11)  // t
+        XCTAssertEqual(sequence[1].keyCode, 0x04)  // h
+        XCTAssertEqual(sequence[2].keyCode, 0x20)  // u
+        XCTAssertEqual(sequence[3].keyCode, 0x0D)  // w
+        XCTAssertEqual(sequence[4].keyCode, 0x0E)  // e - BEFORE f ✓
+        XCTAssertEqual(sequence[5].keyCode, 0x03)  // f - AFTER e ✓
+        
+        // Compare with getAllRawKeystrokes (per-entry order)
+        let allKeystrokes = buffer.getAllRawKeystrokes()
+        // getAllRawKeystrokes groups by entry, so f comes before e
+        // Entry[2] = ư with modifiers [w, f]
+        // Entry[3] = e with no modifiers
+        // Result: t, h, u, w, f, e (WRONG order for restore!)
+        XCTAssertEqual(allKeystrokes[4].keyCode, 0x03)  // f before e
+        XCTAssertEqual(allKeystrokes[5].keyCode, 0x0E)  // e after f
+        
+        // This demonstrates why we need keystrokeSequence for restore!
+    }
+    
+    // MARK: - Remove Tests
+    
+    /// Test that removeLast removes keystrokes from sequence
+    func testRemoveLastUpdatesSequence() {
+        // Append t, h, u
+        buffer.append(keyCode: 0x11, isCaps: false)
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x11, isCaps: false))
+        
+        buffer.append(keyCode: 0x04, isCaps: false)
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x04, isCaps: false))
+        
+        buffer.append(keyCode: 0x20, isCaps: false)
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x20, isCaps: false))
+        
+        // Remove last (u)
+        buffer.removeLast()
+        
+        // Sequence should be: t, h
+        let sequence = buffer.getKeystrokeSequence()
+        XCTAssertEqual(sequence.count, 2)
+        XCTAssertEqual(sequence[0].keyCode, 0x11)  // t
+        XCTAssertEqual(sequence[1].keyCode, 0x04)  // h
+    }
+    
+    /// Test that removeLast with modifiers removes all keystrokes from that entry
+    func testRemoveLastWithModifiersUpdatesSequence() {
+        // Append t, h
+        buffer.append(keyCode: 0x11, isCaps: false)
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x11, isCaps: false))
+        
+        buffer.append(keyCode: 0x04, isCaps: false)
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x04, isCaps: false))
+        
+        // Append u with w modifier (ư)
+        buffer.append(keyCode: 0x20, isCaps: false)
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x20, isCaps: false))
+        buffer.addModifierToLast(RawKeystroke(keyCode: 0x0D, isCaps: false))
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x0D, isCaps: false))
+        
+        // Remove last (ư which has u + w = 2 keystrokes)
+        buffer.removeLast()
+        
+        // Sequence should be: t, h (u and w removed)
+        let sequence = buffer.getKeystrokeSequence()
+        XCTAssertEqual(sequence.count, 2)
+        XCTAssertEqual(sequence[0].keyCode, 0x11)  // t
+        XCTAssertEqual(sequence[1].keyCode, 0x04)  // h
+    }
+    
+    /// Test that removeLastModifier updates sequence
+    func testRemoveLastModifierUpdatesSequence() {
+        // Append u with w modifier
+        buffer.append(keyCode: 0x20, isCaps: false)
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x20, isCaps: false))
+        buffer.addModifierToLast(RawKeystroke(keyCode: 0x0D, isCaps: false))
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x0D, isCaps: false))
+        
+        XCTAssertEqual(buffer.keystrokeSequenceCount, 2)
+        
+        // Remove modifier (w)
+        buffer.removeLastModifierFromLast()
+        
+        // Sequence should be: u only
+        let sequence = buffer.getKeystrokeSequence()
+        XCTAssertEqual(sequence.count, 1)
+        XCTAssertEqual(sequence[0].keyCode, 0x20)  // u
+    }
+    
+    // MARK: - Clear Tests
+    
+    /// Test that clear clears keystrokeSequence
+    func testClearClearsSequence() {
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x11, isCaps: false))
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x04, isCaps: false))
+        
+        XCTAssertEqual(buffer.keystrokeSequenceCount, 2)
+        
+        buffer.clear()
+        
+        XCTAssertEqual(buffer.keystrokeSequenceCount, 0)
+        XCTAssertTrue(buffer.getKeystrokeSequence().isEmpty)
+    }
+    
+    // MARK: - UInt32 Conversion Tests
+    
+    /// Test getKeystrokeSequenceAsUInt32
+    func testKeystrokeSequenceAsUInt32() {
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x11, isCaps: false))  // t
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x04, isCaps: true))   // H (caps)
+        
+        let sequence = buffer.getKeystrokeSequenceAsUInt32()
+        XCTAssertEqual(sequence.count, 2)
+        XCTAssertEqual(sequence[0], 0x11)  // t without caps
+        XCTAssertEqual(sequence[1], 0x04 | TypingBuffer.CAPS_MASK)  // H with caps
+    }
+    
+    // MARK: - Complex Scenario Tests
+    
+    /// Test "quás" scenario: q, u, a, a (modifier), s (modifier)
+    func testQuasScenario() {
+        // q
+        buffer.append(keyCode: 0x0C, isCaps: false)
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x0C, isCaps: false))
+        
+        // u
+        buffer.append(keyCode: 0x20, isCaps: false)
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x20, isCaps: false))
+        
+        // a
+        buffer.append(keyCode: 0x00, isCaps: false)
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x00, isCaps: false))
+        
+        // second a (modifier to make â)
+        buffer.addModifierToLast(RawKeystroke(keyCode: 0x00, isCaps: false))
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x00, isCaps: false))
+        
+        // s (mark on â)
+        buffer.addModifierToLast(RawKeystroke(keyCode: 0x01, isCaps: false))
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x01, isCaps: false))
+        
+        // Sequence should be: q, u, a, a, s
+        let sequence = buffer.getKeystrokeSequence()
+        XCTAssertEqual(sequence.count, 5)
+        XCTAssertEqual(sequence[0].keyCode, 0x0C)  // q
+        XCTAssertEqual(sequence[1].keyCode, 0x20)  // u
+        XCTAssertEqual(sequence[2].keyCode, 0x00)  // a
+        XCTAssertEqual(sequence[3].keyCode, 0x00)  // a (modifier)
+        XCTAssertEqual(sequence[4].keyCode, 0x01)  // s
+    }
+    
+    /// Test caps preserved in sequence
+    func testCapsPreservedInSequence() {
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x11, isCaps: true))   // T
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x04, isCaps: false))  // h
+        
+        let sequence = buffer.getKeystrokeSequence()
+        XCTAssertTrue(sequence[0].isCaps)   // T is caps
+        XCTAssertFalse(sequence[1].isCaps)  // h is not caps
+    }
+    
+    /// Test removeLastFromSequence
+    func testRemoveLastFromSequence() {
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x11, isCaps: false))
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x04, isCaps: false))
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x20, isCaps: false))
+        
+        let removed = buffer.removeLastFromSequence()
+        
+        XCTAssertNotNil(removed)
+        XCTAssertEqual(removed?.keyCode, 0x20)
+        XCTAssertEqual(buffer.keystrokeSequenceCount, 2)
+    }
+}
+
+// MARK: - Restore + Edit Tests
+
+/// Tests for restore from history followed by edit operations
+/// These tests ensure keystrokeSequence remains consistent after restore + delete + type
+class RestoreEditTests: XCTestCase {
+    
+    var buffer: TypingBuffer!
+    
+    override func setUp() {
+        super.setUp()
+        buffer = TypingBuffer()
+    }
+    
+    override func tearDown() {
+        buffer = nil
+        super.tearDown()
+    }
+    
+    // MARK: - Snapshot and Restore
+    
+    /// Test that createSnapshot includes keystrokeSequence
+    func testCreateSnapshotIncludesKeystrokeSequence() {
+        // Simulate typing "ua" with w modifier on u (ưa)
+        buffer.append(keyCode: 0x20, isCaps: false)  // u
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x20, isCaps: false))
+        
+        buffer.append(keyCode: 0x00, isCaps: false)  // a
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x00, isCaps: false))
+        
+        buffer.addModifier(at: 0, keystroke: RawKeystroke(keyCode: 0x0D, isCaps: false))  // w
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x0D, isCaps: false))
+        
+        let snapshot = buffer.createSnapshot()
+        
+        // Snapshot should have keystrokeSequence
+        XCTAssertEqual(snapshot.keystrokeSequence.count, 3)
+        XCTAssertEqual(snapshot.keystrokeSequence[0].keyCode, 0x20)  // u
+        XCTAssertEqual(snapshot.keystrokeSequence[1].keyCode, 0x00)  // a
+        XCTAssertEqual(snapshot.keystrokeSequence[2].keyCode, 0x0D)  // w
+    }
+    
+    /// Test that restore rebuilds keystrokeSequence from entries (per-entry order)
+    func testRestoreRebuildsKeystrokeSequenceFromEntries() {
+        // Create a snapshot with specific keystrokeSequence
+        let entry1 = CharacterEntry(keyCode: 0x20, isCaps: false)  // u
+        var entry1WithMod = entry1
+        entry1WithMod.addModifier(RawKeystroke(keyCode: 0x0D, isCaps: false))  // w
+        
+        let entry2 = CharacterEntry(keyCode: 0x00, isCaps: false)  // a
+        
+        // Original typing order: u, a, w (w typed after a)
+        let originalSequence = [
+            RawKeystroke(keyCode: 0x20, isCaps: false),  // u
+            RawKeystroke(keyCode: 0x00, isCaps: false),  // a
+            RawKeystroke(keyCode: 0x0D, isCaps: false)   // w
+        ]
+        
+        let snapshot = BufferSnapshot(
+            entries: [entry1WithMod, entry2],
+            overflow: [],
+            keystrokeSequence: originalSequence
+        )
+        
+        // Restore
+        buffer.restore(from: snapshot)
+        
+        // keystrokeSequence should be rebuilt from entries (per-entry order)
+        // Entry order: u (with w), a → getAllRawKeystrokes = [u, w, a]
+        let restoredSequence = buffer.getKeystrokeSequence()
+        XCTAssertEqual(restoredSequence.count, 3)
+        XCTAssertEqual(restoredSequence[0].keyCode, 0x20)  // u
+        XCTAssertEqual(restoredSequence[1].keyCode, 0x0D)  // w (modifier of u)
+        XCTAssertEqual(restoredSequence[2].keyCode, 0x00)  // a
+    }
+    
+    /// Critical test: "thừa" → restore → delete 'a' → type 'e' → keystrokeSequence should be [t, h, u, w, f, e]
+    func testRestoreDeleteTypeProducesCorrectSequence() {
+        // Build "thừa" entries
+        // t
+        let entryT = CharacterEntry(keyCode: 0x11, isCaps: false)
+        // h
+        let entryH = CharacterEntry(keyCode: 0x04, isCaps: false)
+        // ừ (u + w modifier + f modifier)
+        var entryU = CharacterEntry(keyCode: 0x20, isCaps: false)
+        entryU.addModifier(RawKeystroke(keyCode: 0x0D, isCaps: false))  // w
+        entryU.addModifier(RawKeystroke(keyCode: 0x03, isCaps: false))  // f
+        // a
+        let entryA = CharacterEntry(keyCode: 0x00, isCaps: false)
+        
+        // Original typing sequence: t, h, u, a, w, f (w and f typed after a)
+        let originalSequence = [
+            RawKeystroke(keyCode: 0x11, isCaps: false),  // t
+            RawKeystroke(keyCode: 0x04, isCaps: false),  // h
+            RawKeystroke(keyCode: 0x20, isCaps: false),  // u
+            RawKeystroke(keyCode: 0x00, isCaps: false),  // a
+            RawKeystroke(keyCode: 0x0D, isCaps: false),  // w
+            RawKeystroke(keyCode: 0x03, isCaps: false)   // f
+        ]
+        
+        let snapshot = BufferSnapshot(
+            entries: [entryT, entryH, entryU, entryA],
+            overflow: [],
+            keystrokeSequence: originalSequence
+        )
+        
+        // Step 1: Restore from snapshot
+        buffer.restore(from: snapshot)
+        
+        // After restore, keystrokeSequence should be per-entry order: [t, h, u, w, f, a]
+        var sequence = buffer.getKeystrokeSequence()
+        XCTAssertEqual(sequence.count, 6)
+        XCTAssertEqual(sequence[0].keyCode, 0x11)  // t
+        XCTAssertEqual(sequence[1].keyCode, 0x04)  // h
+        XCTAssertEqual(sequence[2].keyCode, 0x20)  // u
+        XCTAssertEqual(sequence[3].keyCode, 0x0D)  // w
+        XCTAssertEqual(sequence[4].keyCode, 0x03)  // f
+        XCTAssertEqual(sequence[5].keyCode, 0x00)  // a (now at end!)
+        
+        // Step 2: Delete 'a' (last entry)
+        buffer.removeLast()
+        
+        // After delete, keystrokeSequence should be: [t, h, u, w, f]
+        sequence = buffer.getKeystrokeSequence()
+        XCTAssertEqual(sequence.count, 5)
+        XCTAssertEqual(sequence[0].keyCode, 0x11)  // t
+        XCTAssertEqual(sequence[1].keyCode, 0x04)  // h
+        XCTAssertEqual(sequence[2].keyCode, 0x20)  // u
+        XCTAssertEqual(sequence[3].keyCode, 0x0D)  // w
+        XCTAssertEqual(sequence[4].keyCode, 0x03)  // f
+        
+        // Step 3: Type 'e'
+        buffer.append(keyCode: 0x0E, isCaps: false)
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x0E, isCaps: false))
+        
+        // After type 'e', keystrokeSequence should be: [t, h, u, w, f, e]
+        sequence = buffer.getKeystrokeSequence()
+        XCTAssertEqual(sequence.count, 6)
+        XCTAssertEqual(sequence[0].keyCode, 0x11)  // t
+        XCTAssertEqual(sequence[1].keyCode, 0x04)  // h
+        XCTAssertEqual(sequence[2].keyCode, 0x20)  // u
+        XCTAssertEqual(sequence[3].keyCode, 0x0D)  // w
+        XCTAssertEqual(sequence[4].keyCode, 0x03)  // f
+        XCTAssertEqual(sequence[5].keyCode, 0x0E)  // e
+        
+        // This sequence when restored produces: "thuwfe" ✓
+    }
+    
+    /// Test delete entry with modifiers removes all keystrokes correctly
+    func testDeleteEntryWithModifiersRemovesAllKeystrokes() {
+        // Build "ừ" = u + w + f
+        buffer.append(keyCode: 0x20, isCaps: false)  // u
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x20, isCaps: false))
+        
+        buffer.addModifierToLast(RawKeystroke(keyCode: 0x0D, isCaps: false))  // w
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x0D, isCaps: false))
+        
+        buffer.addModifierToLast(RawKeystroke(keyCode: 0x03, isCaps: false))  // f
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x03, isCaps: false))
+        
+        XCTAssertEqual(buffer.keystrokeSequenceCount, 3)  // u, w, f
+        
+        // Delete the entry (ừ)
+        buffer.removeLast()
+        
+        // All keystrokes should be removed
+        XCTAssertEqual(buffer.keystrokeSequenceCount, 0)
+    }
+    
+    /// Test restore empty snapshot
+    func testRestoreEmptySnapshot() {
+        // Add some content first
+        buffer.append(keyCode: 0x11, isCaps: false)
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x11, isCaps: false))
+        
+        // Restore empty
+        buffer.restore(from: BufferSnapshot.empty)
+        
+        XCTAssertEqual(buffer.count, 0)
+        XCTAssertEqual(buffer.keystrokeSequenceCount, 0)
+    }
+    
+    /// Test multiple restore operations
+    func testMultipleRestoreOperations() {
+        // Create first snapshot: "ab"
+        let snapshot1 = BufferSnapshot(
+            entries: [
+                CharacterEntry(keyCode: 0x00, isCaps: false),  // a
+                CharacterEntry(keyCode: 0x0B, isCaps: false)   // b
+            ],
+            overflow: [],
+            keystrokeSequence: []
+        )
+        
+        // Create second snapshot: "xy"
+        let snapshot2 = BufferSnapshot(
+            entries: [
+                CharacterEntry(keyCode: 0x07, isCaps: false),  // x
+                CharacterEntry(keyCode: 0x10, isCaps: false)   // y
+            ],
+            overflow: [],
+            keystrokeSequence: []
+        )
+        
+        // Restore first
+        buffer.restore(from: snapshot1)
+        XCTAssertEqual(buffer.count, 2)
+        
+        // Restore second
+        buffer.restore(from: snapshot2)
+        XCTAssertEqual(buffer.count, 2)
+        
+        // keystrokeSequence should match second snapshot's entries
+        let sequence = buffer.getKeystrokeSequence()
+        XCTAssertEqual(sequence.count, 2)
+        XCTAssertEqual(sequence[0].keyCode, 0x07)  // x
+        XCTAssertEqual(sequence[1].keyCode, 0x10)  // y
+    }
+    
+    /// Test that getAllRawKeystrokes matches keystrokeSequence after restore
+    func testGetAllRawKeystrokesMatchesSequenceAfterRestore() {
+        // Create snapshot with entry that has modifiers
+        var entryU = CharacterEntry(keyCode: 0x20, isCaps: false)
+        entryU.addModifier(RawKeystroke(keyCode: 0x0D, isCaps: false))  // w
+        
+        let snapshot = BufferSnapshot(
+            entries: [entryU],
+            overflow: [],
+            keystrokeSequence: [
+                RawKeystroke(keyCode: 0x20, isCaps: false),
+                RawKeystroke(keyCode: 0x0D, isCaps: false)
+            ]
+        )
+        
+        buffer.restore(from: snapshot)
+        
+        // After restore, keystrokeSequence should equal getAllRawKeystrokes
+        let allRaw = buffer.getAllRawKeystrokes()
+        let sequence = buffer.getKeystrokeSequence()
+        
+        XCTAssertEqual(allRaw.count, sequence.count)
+        for i in 0..<allRaw.count {
+            XCTAssertEqual(allRaw[i].keyCode, sequence[i].keyCode)
+            XCTAssertEqual(allRaw[i].isCaps, sequence[i].isCaps)
+        }
+    }
+}
+
+// MARK: - Integration Tests for Restore Wrong Spelling
+
+/// Tests that simulate the full restore wrong spelling flow
+class RestoreWrongSpellingIntegrationTests: XCTestCase {
+    
+    var buffer: TypingBuffer!
+    
+    override func setUp() {
+        super.setUp()
+        buffer = TypingBuffer()
+    }
+    
+    override func tearDown() {
+        buffer = nil
+        super.tearDown()
+    }
+    
+    /// Simulate typing "thưef" where f is modifier for ư typed AFTER e
+    /// Original bug: restore produced "thuwfe" instead of "thuwef"
+    func testTypingWithLateModifierProducesCorrectRestoreOrder() {
+        // Simulate typing: t, h, u, w, e, f
+        // Note: f is modifier for ư but typed after e
+        
+        // t
+        buffer.append(keyCode: 0x11, isCaps: false)
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x11, isCaps: false))
+        
+        // h
+        buffer.append(keyCode: 0x04, isCaps: false)
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x04, isCaps: false))
+        
+        // u
+        buffer.append(keyCode: 0x20, isCaps: false)
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x20, isCaps: false))
+        
+        // w (modifier to u → ư)
+        buffer.addModifier(at: 2, keystroke: RawKeystroke(keyCode: 0x0D, isCaps: false))
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x0D, isCaps: false))
+        
+        // e (new entry, typed BEFORE f)
+        buffer.append(keyCode: 0x0E, isCaps: false)
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x0E, isCaps: false))
+        
+        // f (modifier to ư, typed AFTER e)
+        buffer.addModifier(at: 2, keystroke: RawKeystroke(keyCode: 0x03, isCaps: false))
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x03, isCaps: false))
+        
+        // keystrokeSequence should maintain typing order: t, h, u, w, e, f
+        let sequence = buffer.getKeystrokeSequence()
+        XCTAssertEqual(sequence.count, 6)
+        XCTAssertEqual(sequence[0].keyCode, 0x11)  // t
+        XCTAssertEqual(sequence[1].keyCode, 0x04)  // h
+        XCTAssertEqual(sequence[2].keyCode, 0x20)  // u
+        XCTAssertEqual(sequence[3].keyCode, 0x0D)  // w
+        XCTAssertEqual(sequence[4].keyCode, 0x0E)  // e - BEFORE f ✓
+        XCTAssertEqual(sequence[5].keyCode, 0x03)  // f - AFTER e ✓
+        
+        // Restore using keystrokeSequence produces: "thuwef" ✓
+    }
+    
+    /// Simulate the problematic scenario from log:
+    /// Type "thừa" → save → restore → delete 'a' → type 'e' → restore should produce "thuwfe"
+    func testHistoryRestoreThenEditProducesCorrectRestore() {
+        // Step 1: Type "thừa" (simulated by building entries directly)
+        // In real typing: t, h, u, a, w, f
+        // Entry order: t, h, ừ (u+w+f), a
+        
+        // t
+        buffer.append(keyCode: 0x11, isCaps: false)
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x11, isCaps: false))
+        
+        // h  
+        buffer.append(keyCode: 0x04, isCaps: false)
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x04, isCaps: false))
+        
+        // u
+        buffer.append(keyCode: 0x20, isCaps: false)
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x20, isCaps: false))
+        
+        // a
+        buffer.append(keyCode: 0x00, isCaps: false)
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x00, isCaps: false))
+        
+        // w (modifier to u → ư)
+        buffer.addModifier(at: 2, keystroke: RawKeystroke(keyCode: 0x0D, isCaps: false))
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x0D, isCaps: false))
+        
+        // f (modifier to ư → ừ)
+        buffer.addModifier(at: 2, keystroke: RawKeystroke(keyCode: 0x03, isCaps: false))
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x03, isCaps: false))
+        
+        // Step 2: Save to history (simulate)
+        let snapshot = buffer.createSnapshot()
+        
+        // Step 3: Clear (simulate word break)
+        buffer.clear()
+        
+        // Step 4: Restore from history
+        buffer.restore(from: snapshot)
+        
+        // After restore, keystrokeSequence is per-entry order: [t, h, u, w, f, a]
+        var sequence = buffer.getKeystrokeSequence()
+        XCTAssertEqual(sequence.count, 6)
+        XCTAssertEqual(sequence[5].keyCode, 0x00)  // 'a' at end
+        
+        // Step 5: Delete 'a'
+        buffer.removeLast()
+        
+        // After delete: [t, h, u, w, f]
+        sequence = buffer.getKeystrokeSequence()
+        XCTAssertEqual(sequence.count, 5)
+        XCTAssertEqual(sequence[4].keyCode, 0x03)  // 'f' now at end
+        
+        // Step 6: Type 'e'
+        buffer.append(keyCode: 0x0E, isCaps: false)
+        buffer.recordKeystroke(RawKeystroke(keyCode: 0x0E, isCaps: false))
+        
+        // After type 'e': [t, h, u, w, f, e]
+        sequence = buffer.getKeystrokeSequence()
+        XCTAssertEqual(sequence.count, 6)
+        XCTAssertEqual(sequence[0].keyCode, 0x11)  // t
+        XCTAssertEqual(sequence[1].keyCode, 0x04)  // h
+        XCTAssertEqual(sequence[2].keyCode, 0x20)  // u
+        XCTAssertEqual(sequence[3].keyCode, 0x0D)  // w
+        XCTAssertEqual(sequence[4].keyCode, 0x03)  // f
+        XCTAssertEqual(sequence[5].keyCode, 0x0E)  // e
+        
+        // Restore using this sequence produces: "thuwfe" ✓
     }
 }

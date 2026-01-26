@@ -739,6 +739,93 @@ class CharacterInjector {
         return char
     }
 
+    /// Get text before cursor using Accessibility API
+    /// Returns: String of text before cursor (up to specified length), nil if AX not supported
+    /// This is used for verifying buffer matches screen content before restore operations
+    func getTextBeforeCursor(length: Int = 50) -> String? {
+        let systemWideElement = AXUIElementCreateSystemWide()
+
+        var focusedElement: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(systemWideElement, kAXFocusedUIElementAttribute as CFString, &focusedElement) == .success else {
+            debugCallback?("  [AX] getTextBeforeCursor: Failed to get focused element")
+            return nil
+        }
+
+        let element = focusedElement as! AXUIElement
+
+        // Get selected text range (cursor position)
+        var selectedRange: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &selectedRange) == .success else {
+            debugCallback?("  [AX] getTextBeforeCursor: Failed to get selected range")
+            return nil
+        }
+
+        var rangeValue = CFRange(location: 0, length: 0)
+        guard AXValueGetValue(selectedRange as! AXValue, .cfRange, &rangeValue) else {
+            debugCallback?("  [AX] getTextBeforeCursor: Failed to extract range value")
+            return nil
+        }
+
+        let cursorPosition = rangeValue.location
+
+        // Ensure cursor position is valid
+        guard cursorPosition > 0 else {
+            debugCallback?("  [AX] getTextBeforeCursor: Cursor at position 0")
+            return ""  // Return empty string, not nil (AX works, just no text before cursor)
+        }
+
+        // Calculate how many characters to read (up to 'length' chars before cursor)
+        let readLength = min(length, cursorPosition)
+        let startPosition = cursorPosition - readLength
+        let readRange = CFRange(location: startPosition, length: readLength)
+        
+        var readRangeValue = readRange
+        guard let axRange = AXValueCreate(.cfRange, &readRangeValue) else {
+            debugCallback?("  [AX] getTextBeforeCursor: Failed to create AXValue")
+            return nil
+        }
+
+        var text: CFTypeRef?
+        guard AXUIElementCopyParameterizedAttributeValue(
+            element,
+            kAXStringForRangeParameterizedAttribute as CFString,
+            axRange,
+            &text
+        ) == .success else {
+            debugCallback?("  [AX] getTextBeforeCursor: Failed to read text")
+            return nil
+        }
+
+        guard let resultText = text as? String else {
+            debugCallback?("  [AX] getTextBeforeCursor: Text is not a string")
+            return nil
+        }
+
+        debugCallback?("  [AX] getTextBeforeCursor: Read '\(resultText)' (\(resultText.count) chars)")
+        return resultText
+    }
+
+    /// Get the last word before cursor using Accessibility API
+    /// Returns: The last word (text after last whitespace), nil if AX not supported or no text
+    /// This is used for verifying buffer matches screen content
+    func getLastWordBeforeCursor() -> String? {
+        // Query only 10 chars - Vietnamese words are typically 2-7 chars
+        // This minimizes AX overhead while still being sufficient for verification
+        guard let textBeforeCursor = getTextBeforeCursor(length: 10) else {
+            return nil  // AX not supported
+        }
+        
+        guard !textBeforeCursor.isEmpty else {
+            return ""  // No text before cursor
+        }
+        
+        // Find the last word (after last whitespace)
+        let components = textBeforeCursor.components(separatedBy: .whitespacesAndNewlines)
+        let lastWord = components.last ?? ""
+        
+        debugCallback?("  [AX] getLastWordBeforeCursor: '\(lastWord)'")
+        return lastWord
+    }
 
 
     /// Determine if Forward Delete should be sent for autocomplete method (Firefox/Safari address bar)
