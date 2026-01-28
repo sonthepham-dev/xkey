@@ -153,16 +153,21 @@ class CharacterInjector {
                 // IMPORTANT: Only send Forward Delete when there's NO real text after cursor.
                 // If user clicked into middle of existing text, Forward Delete would delete
                 // real characters. AutoComplete suggestions are not counted as "real text" by AX API.
+                //
+                // NOTE: For web apps (Google Sheets in Chrome), AX API often fails to get focused element.
+                // When AX fails, we default to TRUE (assume text exists) to AVOID Forward Delete.
+                // This is safer: missing an autocomplete clear is better than deleting real text.
                 let needsForwardDelete = AppBehaviorDetector.shared.needsForwardDeleteWithAXCheck
                 if needsForwardDelete && backspaceCount > 0 {
                     // Check if there's real text after cursor using Accessibility API
-                    let hasRealTextAfter = hasTextAfterCursor() ?? false
+                    // Default to true (skip Forward Delete) when AX fails - safer to not delete
+                    let hasRealTextAfter = hasTextAfterCursor() ?? true
                     if !hasRealTextAfter {
                         debugCallback?("    → AutoComplete app: sending Forward Delete to clear suggestion")
                         sendForwardDelete(proxy: proxy)
                         usleep(2000)  // 2ms delay after Forward Delete
                     } else {
-                        debugCallback?("    → AutoComplete app: skipping Forward Delete (real text after cursor)")
+                        debugCallback?("    → AutoComplete app: skipping Forward Delete (real text after cursor or AX failed)")
                     }
                 }
 
