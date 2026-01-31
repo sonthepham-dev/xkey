@@ -35,6 +35,12 @@ struct AppVersion {
         return rev?.trimmingCharacters(in: .whitespaces).isEmpty == false ? rev : nil
     }
 
+    /// Git revision for origin (sonthepham-dev/xkey) at build time, from XKeyGitRevisionOrigin. Nil if not set.
+    static var gitRevisionOrigin: String? {
+        let rev = Bundle.main.infoDictionary?["XKeyGitRevisionOrigin"] as? String
+        return rev?.trimmingCharacters(in: .whitespaces).isEmpty == false ? rev : nil
+    }
+
     /// Returns true if (remoteMarketing, remoteBuild) is newer than current app version
     static func isNewer(remoteMarketing: String, remoteBuild: String) -> Bool {
         let cmp = compareMarketingVersions(remoteMarketing, current)

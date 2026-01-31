@@ -1687,13 +1687,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    // MARK: - Version Check (revision vs upstream xmannv/xkey)
+    // MARK: - Version Check (revision vs upstream xmannv/xkey and origin sonthepham-dev/xkey)
 
     private static let versionCheckURL = URL(string: "https://raw.githubusercontent.com/xmannv/xkey/main/Version.xcconfig")!
+    private static let originVersionCheckURL = URL(string: "https://raw.githubusercontent.com/sonthepham-dev/xkey/main/Version.xcconfig")!
     private static let upstreamRefsURL = URL(string: "https://api.github.com/repos/xmannv/xkey/git/refs/heads/main")!
+    private static let originRefsURL = URL(string: "https://api.github.com/repos/sonthepham-dev/xkey/git/refs/heads/main")!
 
     private static func upstreamCompareURL(localSha: String, remoteSha: String) -> URL {
         URL(string: "https://api.github.com/repos/xmannv/xkey/compare/\(localSha)...\(remoteSha)")!
+    }
+
+    private static func originCompareURL(localSha: String, remoteSha: String) -> URL {
+        URL(string: "https://api.github.com/repos/sonthepham-dev/xkey/compare/\(localSha)...\(remoteSha)")!
     }
 
     private func checkForUpdates() {
@@ -1838,20 +1844,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         debugWindowController?.logEvent("Background version check: no git revision, skipping")
     }
 
-    private enum VersionCheckResult {
+    private enum VersionCheckResult: Equatable {
         case newer(remoteRevision: String, changelog: String?)
         case upToDate
         case error
     }
 
-    private func fetchUpstreamHeadAndCompare(showAlertAlways: Bool, completion: @escaping (VersionCheckResult) -> Void) {
-        debugWindowController?.logEvent("Version check: fetching upstream refs...")
-        var request = URLRequest(url: Self.upstreamRefsURL)
+    private func fetchRefsAndCompare(refsURL: URL, compareURL: @escaping (String, String) -> URL, localRev: String, label: String, completion: @escaping (VersionCheckResult) -> Void) {
+        debugWindowController?.logEvent("Version check (\(label)): fetching refs...")
+        var request = URLRequest(url: refsURL)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         let task = URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
             guard let self = self else { return }
             if let error = error {
-                self.debugWindowController?.logEvent("Version check (refs) failed: \(error.localizedDescription)")
+                self.debugWindowController?.logEvent("Version check (\(label)) refs failed: \(error.localizedDescription)")
                 completion(.error)
                 return
             }
@@ -1860,29 +1866,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let obj = json["object"] as? [String: Any],
                   let remoteSha = obj["sha"] as? String, !remoteSha.isEmpty else {
-                self.debugWindowController?.logEvent("Version check: invalid refs response")
+                self.debugWindowController?.logEvent("Version check (\(label)): invalid refs response")
                 completion(.error)
                 return
             }
-            guard let localRev = AppVersion.gitRevision, !localRev.isEmpty else {
-                self.debugWindowController?.logEvent("Version check: no local revision")
-                completion(.error)
-                return
-            }
-            self.debugWindowController?.logEvent("Version check: local \(localRev.prefix(7)), remote \(remoteSha.prefix(7))")
+            self.debugWindowController?.logEvent("Version check (\(label)): local \(localRev.prefix(7)), remote \(remoteSha.prefix(7))")
             if localRev == remoteSha {
-                self.debugWindowController?.logEvent("Version check: up to date (revision \(localRev.prefix(7)))")
+                self.debugWindowController?.logEvent("Version check (\(label)): up to date")
                 completion(.upToDate)
                 return
             }
-            self.debugWindowController?.logEvent("Version check: comparing \(localRev.prefix(7))...\(remoteSha.prefix(7))")
-            let compareURL = Self.upstreamCompareURL(localSha: localRev, remoteSha: remoteSha)
-            var compareRequest = URLRequest(url: compareURL)
+            self.debugWindowController?.logEvent("Version check (\(label)): comparing \(localRev.prefix(7))...\(remoteSha.prefix(7))")
+            let compareRequestURL = compareURL(localRev, remoteSha)
+            var compareRequest = URLRequest(url: compareRequestURL)
             compareRequest.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
             let compareTask = URLSession.shared.dataTask(with: compareRequest) { [weak self] compareData, compareResponse, compareError in
                 guard let self = self else { return }
                 if compareError != nil {
-                    self.debugWindowController?.logEvent("Version check (compare) failed, falling back to Version.xcconfig")
+                    self.debugWindowController?.logEvent("Version check (\(label)) compare failed")
                     completion(.error)
                     return
                 }
@@ -1892,7 +1893,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     return
                 }
                 if compareHttp.statusCode == 404 {
-                    self.debugWindowController?.logEvent("Version check: compare 404 (local SHA not in upstream), falling back")
+                    self.debugWindowController?.logEvent("Version check (\(label)): compare 404 (local SHA not in repo)")
                     completion(.error)
                     return
                 }
@@ -1900,21 +1901,75 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                       let compareJson = try? JSONSerialization.jsonObject(with: compareData) as? [String: Any],
                       let aheadBy = compareJson["ahead_by"] as? Int, aheadBy > 0 else {
                     if (200...299).contains(compareHttp.statusCode), let compareJson = try? JSONSerialization.jsonObject(with: compareData) as? [String: Any], (compareJson["ahead_by"] as? Int) == 0 {
-                        self.debugWindowController?.logEvent("Version check: up to date (ahead_by=0)")
+                        self.debugWindowController?.logEvent("Version check (\(label)): up to date (ahead_by=0)")
                         completion(.upToDate)
                     } else {
-                        self.debugWindowController?.logEvent("Version check: compare response invalid or non-2xx")
+                        self.debugWindowController?.logEvent("Version check (\(label)): compare response invalid or non-2xx")
                         completion(.error)
                     }
                     return
                 }
                 let changelog = Self.formatChangelog(from: compareData)
-                self.debugWindowController?.logEvent("Version check: \(aheadBy) commit(s) behind upstream")
+                self.debugWindowController?.logEvent("Version check (\(label)): \(aheadBy) commit(s) behind")
                 completion(.newer(remoteRevision: String(remoteSha.prefix(7)), changelog: changelog))
             }
             compareTask.resume()
         }
         task.resume()
+    }
+
+    private func fetchUpstreamHeadAndCompare(showAlertAlways: Bool, completion: @escaping (VersionCheckResult) -> Void) {
+        guard let localRev = AppVersion.gitRevision, !localRev.isEmpty else {
+            debugWindowController?.logEvent("Version check: no local revision")
+            completion(.error)
+            return
+        }
+        let group = DispatchGroup()
+        var upstreamResult: VersionCheckResult?
+        var originResult: VersionCheckResult?
+        let lock = NSLock()
+
+        group.enter()
+        fetchRefsAndCompare(refsURL: Self.upstreamRefsURL, compareURL: Self.upstreamCompareURL, localRev: localRev, label: "upstream") { r in
+            lock.lock()
+            upstreamResult = r
+            lock.unlock()
+            group.leave()
+        }
+
+        if let originRev = AppVersion.gitRevisionOrigin, !originRev.isEmpty {
+            group.enter()
+            fetchRefsAndCompare(refsURL: Self.originRefsURL, compareURL: Self.originCompareURL, localRev: originRev, label: "origin") { r in
+                lock.lock()
+                originResult = r
+                lock.unlock()
+                group.leave()
+            }
+        }
+
+        group.notify(queue: .main) { [weak self] in
+            lock.lock()
+            let up = upstreamResult
+            let or = originResult
+            lock.unlock()
+            if case .newer? = up {
+                self?.debugWindowController?.logEvent("Version check: newer from upstream")
+                completion(up!)
+                return
+            }
+            if case .newer? = or {
+                self?.debugWindowController?.logEvent("Version check: newer from origin")
+                completion(or!)
+                return
+            }
+            if up == .upToDate && (or == nil || or == .upToDate) {
+                self?.debugWindowController?.logEvent("Version check: up to date (both repos)")
+                completion(.upToDate)
+                return
+            }
+            self?.debugWindowController?.logEvent("Version check: revision check failed, using fallback")
+            completion(.error)
+        }
     }
 
     private static func formatChangelog(from compareData: Data) -> String? {
@@ -1936,39 +1991,75 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func performFallbackVersionCheck(showAlertAlways: Bool) {
-        debugWindowController?.logEvent("Version check: fallback (Version.xcconfig)")
-        let task = URLSession.shared.dataTask(with: Self.versionCheckURL) { [weak self] data, response, error in
+        debugWindowController?.logEvent("Version check: fallback (Version.xcconfig from both repos)")
+        let group = DispatchGroup()
+        var upstreamParsed: (marketing: String, build: String)?
+        var originParsed: (marketing: String, build: String)?
+        var upstreamError = false
+        var originError = false
+        let lock = NSLock()
+
+        group.enter()
+        URLSession.shared.dataTask(with: Self.versionCheckURL) { data, response, error in
+            defer { group.leave() }
+            if error != nil || data == nil {
+                lock.lock()
+                upstreamError = true
+                lock.unlock()
+                return
+            }
+            guard let text = String(data: data!, encoding: .utf8), let parsed = Self.parseVersionXcconfig(text) else { return }
+            lock.lock()
+            upstreamParsed = parsed
+            lock.unlock()
+        }.resume()
+
+        group.enter()
+        URLSession.shared.dataTask(with: Self.originVersionCheckURL) { data, response, error in
+            defer { group.leave() }
+            if error != nil || data == nil {
+                lock.lock()
+                originError = true
+                lock.unlock()
+                return
+            }
+            guard let text = String(data: data!, encoding: .utf8), let parsed = Self.parseVersionXcconfig(text) else { return }
+            lock.lock()
+            originParsed = parsed
+            lock.unlock()
+        }.resume()
+
+        group.notify(queue: .main) { [weak self] in
             guard let self = self else { return }
-            if let error = error {
-                if showAlertAlways {
-                    DispatchQueue.main.async { self.showVersionCheckAlert(hasNewer: nil, remoteRevision: nil, remoteMarketing: nil, remoteBuild: nil, changelog: nil) }
+            lock.lock()
+            let up = upstreamParsed
+            let or = originParsed
+            let upErr = upstreamError
+            let orErr = originError
+            lock.unlock()
+            let hasNewerUp = up.map { AppVersion.isNewer(remoteMarketing: $0.marketing, remoteBuild: $0.build) } ?? false
+            let hasNewerOrigin = or.map { AppVersion.isNewer(remoteMarketing: $0.marketing, remoteBuild: $0.build) } ?? false
+            let hasNewer = hasNewerUp || hasNewerOrigin
+            let (remoteMarketing, remoteBuild): (String?, String?) = {
+                if hasNewerUp && hasNewerOrigin, let u = up, let o = or {
+                    if AppVersion.compareMarketingVersions(o.marketing, u.marketing) > 0 || (AppVersion.compareMarketingVersions(o.marketing, u.marketing) == 0 && AppVersion.compareBuilds(o.build, u.build) > 0) {
+                        return (o.marketing, o.build)
+                    }
+                    return (u.marketing, u.build)
                 }
-                self.debugWindowController?.logEvent("Version check (fallback) failed: \(error.localizedDescription)")
-                return
-            }
-            guard let data = data, let text = String(data: data, encoding: .utf8) else {
-                self.debugWindowController?.logEvent("Version check (fallback): no data or invalid encoding")
-                if showAlertAlways {
-                    DispatchQueue.main.async { self.showVersionCheckAlert(hasNewer: nil, remoteRevision: nil, remoteMarketing: nil, remoteBuild: nil, changelog: nil) }
-                }
-                return
-            }
-            guard let (remoteMarketing, remoteBuild) = Self.parseVersionXcconfig(text) else {
-                self.debugWindowController?.logEvent("Version check (fallback): failed to parse Version.xcconfig")
-                if showAlertAlways {
-                    DispatchQueue.main.async { self.showVersionCheckAlert(hasNewer: nil, remoteRevision: nil, remoteMarketing: nil, remoteBuild: nil, changelog: nil) }
-                }
-                return
-            }
-            let hasNewer = AppVersion.isNewer(remoteMarketing: remoteMarketing, remoteBuild: remoteBuild)
-            self.debugWindowController?.logEvent("Version check (fallback): remote \(remoteMarketing) (\(remoteBuild)), hasNewer=\(hasNewer)")
+                if hasNewerUp, let u = up { return (u.marketing, u.build) }
+                if hasNewerOrigin, let o = or { return (o.marketing, o.build) }
+                return (up?.marketing ?? or?.marketing, up?.build ?? or?.build)
+            }()
+            self.debugWindowController?.logEvent("Version check (fallback): upstream=\(up.map { "\($0.marketing) (\($0.build))" } ?? "failed"), origin=\(or.map { "\($0.marketing) (\($0.build))" } ?? "failed"), hasNewer=\(hasNewer)")
             if showAlertAlways {
-                DispatchQueue.main.async {
+                if upErr && orErr {
+                    self.showVersionCheckAlert(hasNewer: nil, remoteRevision: nil, remoteMarketing: nil, remoteBuild: nil, changelog: nil)
+                } else {
                     self.showVersionCheckAlert(hasNewer: hasNewer, remoteRevision: nil, remoteMarketing: remoteMarketing, remoteBuild: remoteBuild, changelog: nil)
                 }
             }
         }
-        task.resume()
     }
 
     private static func parseVersionXcconfig(_ content: String) -> (marketing: String, build: String)? {

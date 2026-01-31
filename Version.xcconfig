@@ -5,7 +5,9 @@
 // MARKETING_VERSION = CFBundleShortVersionString (displayed version like "1.2.20")
 // CURRENT_PROJECT_VERSION = CFBundleVersion (build number like "20260128.1")
 // GIT_REVISION = commit SHA at build time (set by build_release.sh)
+// GIT_REVISION_ORIGIN = merge-base with origin (sonthepham-dev/xkey) main at build time
 
 MARKETING_VERSION = 1.2.20
 CURRENT_PROJECT_VERSION = 20260130
 GIT_REVISION = 00b4dce42623a227816b12b9802754b6c8e4e172
+GIT_REVISION_ORIGIN = 0b26e71dd1811e9d28e89d526be4c514102ea79d

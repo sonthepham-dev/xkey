@@ -24,6 +24,8 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>XKeyGitRevision</key>
 	<string>$(GIT_REVISION)</string>
+	<key>XKeyGitRevisionOrigin</key>
+	<string>$(GIT_REVISION_ORIGIN)</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.utilities</string>
 	<key>LSMinimumSystemVersion</key>
