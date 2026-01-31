@@ -44,14 +44,26 @@ if [ -f "$XCCONFIG_FILE" ]; then
     CURRENT_VERSION=$(grep "^MARKETING_VERSION" "$XCCONFIG_FILE" | cut -d'=' -f2 | tr -d ' ')
     BUILD_NUMBER=$(grep "^CURRENT_PROJECT_VERSION" "$XCCONFIG_FILE" | cut -d'=' -f2 | tr -d ' ')
     echo "📋 Version: $CURRENT_VERSION ($BUILD_NUMBER)"
-    GIT_REV=$(git rev-parse HEAD 2>/dev/null || true)
+    GIT_REV=""
+    if [ -n "$GIT_REVISION" ]; then
+        GIT_REV="$GIT_REVISION"
+    else
+        git fetch "$REPO_URL" main 2>/dev/null || true
+        REMOTE_SHA=$(git rev-parse FETCH_HEAD 2>/dev/null) || true
+        if [ -n "$REMOTE_SHA" ]; then
+            GIT_REV=$(git merge-base HEAD "$REMOTE_SHA" 2>/dev/null) || true
+        fi
+        if [ -z "$GIT_REV" ]; then
+            GIT_REV=$(git rev-parse HEAD 2>/dev/null) || true
+        fi
+    fi
     if [ -n "$GIT_REV" ]; then
         if sed --version 2>/dev/null | grep -q GNU; then
             sed -i "s/^GIT_REVISION =.*/GIT_REVISION = $GIT_REV/" "$XCCONFIG_FILE"
         else
             sed -i '' "s/^GIT_REVISION =.*/GIT_REVISION = $GIT_REV/" "$XCCONFIG_FILE"
         fi
-        echo "   GIT_REVISION = ${GIT_REV:0:7}"
+        [ -n "$GIT_REVISION" ] && echo "   GIT_REVISION = ${GIT_REV:0:7} (manual)" || echo "   GIT_REVISION = ${GIT_REV:0:7}"
     else
         echo "   GIT_REVISION = (not in git repo or HEAD unavailable)"
     fi

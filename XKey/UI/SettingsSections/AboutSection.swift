@@ -40,6 +40,11 @@ struct AboutSection: View {
                         .font(.caption2)
                         .foregroundColor(.secondary)
                         .padding(.top, 2)
+                    if let rev = AppVersion.gitRevision {
+                        Text(String(rev.prefix(7)))
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
                 }
                 
                 Divider()

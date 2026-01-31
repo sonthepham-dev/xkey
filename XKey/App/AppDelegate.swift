@@ -1714,6 +1714,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func performManualVersionCheck() {
         if let localRev = AppVersion.gitRevision, !localRev.isEmpty {
+            debugWindowController?.logEvent("Version check: starting (revision \(localRev.prefix(7)))")
             fetchUpstreamHeadAndCompare(showAlertAlways: true) { [weak self] result in
                 guard let self = self else { return }
                 switch result {
@@ -1726,11 +1727,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                         self.showVersionCheckAlert(hasNewer: false, remoteRevision: nil, changelog: nil)
                     }
                 case .error:
+                    self.debugWindowController?.logEvent("Version check: revision check failed, using fallback")
                     self.performFallbackVersionCheck(showAlertAlways: true)
                 }
             }
             return
         }
+        debugWindowController?.logEvent("Version check: starting (fallback, no git revision)")
         performFallbackVersionCheck(showAlertAlways: true)
     }
 
@@ -1742,6 +1745,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         UserDefaults.standard.set(Date(), forKey: key)
         if let localRev = AppVersion.gitRevision, !localRev.isEmpty {
+            debugWindowController?.logEvent("Version check: background check (revision \(localRev.prefix(7)))")
             fetchUpstreamHeadAndCompare(showAlertAlways: false) { [weak self] result in
                 guard let self = self else { return }
                 switch result {
@@ -1766,6 +1770,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func fetchUpstreamHeadAndCompare(showAlertAlways: Bool, completion: @escaping (VersionCheckResult) -> Void) {
+        debugWindowController?.logEvent("Version check: fetching upstream refs...")
         var request = URLRequest(url: Self.upstreamRefsURL)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         let task = URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
@@ -1785,14 +1790,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
             guard let localRev = AppVersion.gitRevision, !localRev.isEmpty else {
+                self.debugWindowController?.logEvent("Version check: no local revision")
                 completion(.error)
                 return
             }
+            self.debugWindowController?.logEvent("Version check: local \(localRev.prefix(7)), remote \(remoteSha.prefix(7))")
             if localRev == remoteSha {
                 self.debugWindowController?.logEvent("Version check: up to date (revision \(localRev.prefix(7)))")
                 completion(.upToDate)
                 return
             }
+            self.debugWindowController?.logEvent("Version check: comparing \(localRev.prefix(7))...\(remoteSha.prefix(7))")
             let compareURL = Self.upstreamCompareURL(localSha: localRev, remoteSha: remoteSha)
             var compareRequest = URLRequest(url: compareURL)
             compareRequest.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
@@ -1815,16 +1823,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 guard (200...299).contains(compareHttp.statusCode),
                       let compareJson = try? JSONSerialization.jsonObject(with: compareData) as? [String: Any],
-                      let behindBy = compareJson["behind_by"] as? Int, behindBy > 0 else {
-                    if (200...299).contains(compareHttp.statusCode), let compareJson = try? JSONSerialization.jsonObject(with: compareData) as? [String: Any], (compareJson["behind_by"] as? Int) == 0 {
+                      let aheadBy = compareJson["ahead_by"] as? Int, aheadBy > 0 else {
+                    if (200...299).contains(compareHttp.statusCode), let compareJson = try? JSONSerialization.jsonObject(with: compareData) as? [String: Any], (compareJson["ahead_by"] as? Int) == 0 {
+                        self.debugWindowController?.logEvent("Version check: up to date (ahead_by=0)")
                         completion(.upToDate)
                     } else {
+                        self.debugWindowController?.logEvent("Version check: compare response invalid or non-2xx")
                         completion(.error)
                     }
                     return
                 }
                 let changelog = Self.formatChangelog(from: compareData)
-                self.debugWindowController?.logEvent("Version check: \(behindBy) commit(s) behind upstream")
+                self.debugWindowController?.logEvent("Version check: \(aheadBy) commit(s) behind upstream")
                 completion(.newer(remoteRevision: String(remoteSha.prefix(7)), changelog: changelog))
             }
             compareTask.resume()
@@ -1841,12 +1851,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                   let message = inner["message"] as? String else { return nil }
             let firstLine = message.split(separator: "\n").first.map(String.init) ?? message
             let trimmed = firstLine.trimmingCharacters(in: .whitespaces)
-            return trimmed.isEmpty ? nil : String(trimmed.prefix(80))
+            guard !trimmed.isEmpty else { return nil }
+            let shortSha = (commit["sha"] as? String).map { String($0.prefix(7)) } ?? ""
+            let text = String(trimmed.prefix(80))
+            return shortSha.isEmpty ? "• \(text)" : "• (\(shortSha)) \(text)"
         }
-        return lines.isEmpty ? nil : lines.joined(separator: "\n")
+        guard !lines.isEmpty else { return nil }
+        return lines.joined(separator: "\n\n")
     }
 
     private func performFallbackVersionCheck(showAlertAlways: Bool) {
+        debugWindowController?.logEvent("Version check: fallback (Version.xcconfig)")
         let task = URLSession.shared.dataTask(with: Self.versionCheckURL) { [weak self] data, response, error in
             guard let self = self else { return }
             if let error = error {
@@ -1857,18 +1872,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
             guard let data = data, let text = String(data: data, encoding: .utf8) else {
+                self.debugWindowController?.logEvent("Version check (fallback): no data or invalid encoding")
                 if showAlertAlways {
                     DispatchQueue.main.async { self.showVersionCheckAlert(hasNewer: nil, remoteRevision: nil, remoteMarketing: nil, remoteBuild: nil, changelog: nil) }
                 }
                 return
             }
             guard let (remoteMarketing, remoteBuild) = Self.parseVersionXcconfig(text) else {
+                self.debugWindowController?.logEvent("Version check (fallback): failed to parse Version.xcconfig")
                 if showAlertAlways {
                     DispatchQueue.main.async { self.showVersionCheckAlert(hasNewer: nil, remoteRevision: nil, remoteMarketing: nil, remoteBuild: nil, changelog: nil) }
                 }
                 return
             }
             let hasNewer = AppVersion.isNewer(remoteMarketing: remoteMarketing, remoteBuild: remoteBuild)
+            self.debugWindowController?.logEvent("Version check (fallback): remote \(remoteMarketing) (\(remoteBuild)), hasNewer=\(hasNewer)")
             if showAlertAlways {
                 DispatchQueue.main.async {
                     self.showVersionCheckAlert(hasNewer: hasNewer, remoteRevision: nil, remoteMarketing: remoteMarketing, remoteBuild: remoteBuild, changelog: nil)
@@ -1905,7 +1923,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 alert.messageText = "Phiên bản mới"
                 var body = "Đã có phiên bản mới \(rev)."
                 if let changelog = changelog, !changelog.isEmpty {
-                    body += "\n\n" + changelog
+                    body += "\n\nThay đổi:\n\n" + changelog
                 }
                 alert.informativeText = body
                 alert.addButton(withTitle: "Đóng")
@@ -1914,7 +1932,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 alert.messageText = "Phiên bản mới"
                 var body = "Đã có phiên bản mới \(m) (\(b))."
                 if let changelog = changelog, !changelog.isEmpty {
-                    body += "\n\n" + changelog
+                    body += "\n\nThay đổi:\n\n" + changelog
                 }
                 alert.informativeText = body
                 alert.addButton(withTitle: "Đóng")

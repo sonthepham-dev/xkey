@@ -1,8 +1,17 @@
 #!/bin/bash
 
 # Update, Build, and Install XKey Script
+#
+# Usage: ./update_code.sh [GIT_REVISION]
+#   GIT_REVISION  Optional. Set manually for testing version check (e.g. older SHA).
+#                 Default: unset (build_release.sh uses merge-base with upstream main).
 
-set -e # Exit on error
+set -e
+
+if [ -n "$1" ] && [ "$1" != "--help" ] && [ "$1" != "-h" ]; then
+    export GIT_REVISION="$1"
+    echo "🔧 GIT_REVISION override: $GIT_REVISION"
+fi
 
 echo "🚀 Starting XKey update process..."
 
