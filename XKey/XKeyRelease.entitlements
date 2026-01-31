@@ -3,9 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>com.apple.security.application-groups</key>
-	<array>
-		<string>7E6Z9B4F2H.com.codetay.inputmethod.XKey</string>
-	</array>
+	<array/>
 	<key>com.apple.security.automation.apple-events</key>
 	<true/>
 	<key>com.apple.security.files.downloads.read-write</key>
