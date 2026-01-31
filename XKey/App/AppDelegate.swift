@@ -1712,6 +1712,81 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private static let updateRunnerScriptPath = "/tmp/xkey_update_runner.sh"
+
+    /// Run local update: clone/pull ~/.irix_xkey then run update_code.sh. Opens Terminal so user sees the process.
+    func performLocalUpdate() {
+        let repoPath = (NSString(string: "~/.irix_xkey").expandingTildeInPath as String)
+        let escapedRepo = repoPath.replacingOccurrences(of: "'", with: "'\\''")
+        let scriptContent = """
+        #!/bin/bash
+        set -e
+        REPO='\(escapedRepo)'
+        echo "📁 Repo: $REPO"
+        if [ ! -d "$REPO/.git" ]; then
+          echo "📥 Cloning https://github.com/sonthepham-dev/xkey.git ..."
+          git clone https://github.com/sonthepham-dev/xkey.git "$REPO"
+        fi
+        cd "$REPO" || exit 1
+        git remote set-url origin https://github.com/sonthepham-dev/xkey.git 2>/dev/null || git remote add origin https://github.com/sonthepham-dev/xkey.git
+        git remote get-url upstream 2>/dev/null || git remote add upstream https://github.com/xmannv/xkey.git
+        echo "📥 Pulling from https://github.com/sonthepham-dev/xkey.git (origin)..."
+        git fetch origin 2>/dev/null; git pull origin main 2>/dev/null || true
+        echo "📥 Pulling from https://github.com/xmannv/xkey (upstream)..."
+        git fetch upstream 2>/dev/null; git pull upstream main
+        echo "🔨 Running update_code.sh..."
+        chmod +x ./update_code.sh && ./update_code.sh
+        """
+
+        do {
+            try scriptContent.write(toFile: Self.updateRunnerScriptPath, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: Self.updateRunnerScriptPath)
+        } catch {
+            debugWindowController?.logEvent("Cập nhật: failed to write runner script: \(error.localizedDescription)")
+            DispatchQueue.main.async { [weak self] in
+                self?.showLocalUpdateErrorAlert(message: error.localizedDescription)
+            }
+            return
+        }
+
+        let scriptPathEscaped = Self.updateRunnerScriptPath.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+        let appleScript = """
+        tell application "Terminal" to activate
+        tell application "Terminal" to do script "bash \\"\(scriptPathEscaped)\\""
+        """
+
+        debugWindowController?.logEvent("Cập nhật: opening Terminal with runner script (repo=\(repoPath))")
+        let process = Process()
+        process.launchPath = "/usr/bin/osascript"
+        process.arguments = ["-e", appleScript]
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+            if process.terminationStatus != 0 {
+                DispatchQueue.main.async { [weak self] in
+                    self?.showLocalUpdateErrorAlert(message: "Terminal could not start (osascript exit \(process.terminationStatus))")
+                }
+                return
+            }
+            debugWindowController?.logEvent("Cập nhật: Terminal opened")
+        } catch {
+            debugWindowController?.logEvent("Cập nhật: failed to open Terminal: \(error.localizedDescription)")
+            DispatchQueue.main.async { [weak self] in
+                self?.showLocalUpdateErrorAlert(message: error.localizedDescription)
+            }
+        }
+    }
+
+    private func showLocalUpdateErrorAlert(message: String) {
+        let alert = NSAlert()
+        alert.messageText = "Không thể bắt đầu cập nhật"
+        alert.informativeText = message
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+
     private func performManualVersionCheck() {
         if let localRev = AppVersion.gitRevision, !localRev.isEmpty {
             debugWindowController?.logEvent("Version check: starting (revision \(localRev.prefix(7)))")
@@ -1926,8 +2001,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     body += "\n\nThay đổi:\n\n" + changelog
                 }
                 alert.informativeText = body
+                alert.addButton(withTitle: "Cập nhật")
                 alert.addButton(withTitle: "Đóng")
-                alert.runModal()
+                let response = alert.runModal()
+                if response == .alertFirstButtonReturn {
+                    performLocalUpdate()
+                }
             } else if let m = remoteMarketing, let b = remoteBuild {
                 alert.messageText = "Phiên bản mới"
                 var body = "Đã có phiên bản mới \(m) (\(b))."
@@ -1935,8 +2014,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     body += "\n\nThay đổi:\n\n" + changelog
                 }
                 alert.informativeText = body
+                alert.addButton(withTitle: "Cập nhật")
                 alert.addButton(withTitle: "Đóng")
-                alert.runModal()
+                let response = alert.runModal()
+                if response == .alertFirstButtonReturn {
+                    performLocalUpdate()
+                }
             }
         } else if hasNewer == false {
             alert.messageText = "Đã là phiên bản mới nhất"
