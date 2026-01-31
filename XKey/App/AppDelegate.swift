@@ -7,7 +7,6 @@
 
 import Cocoa
 import SwiftUI
-import Sparkle
 
 // MARK: - AXObserver Callback (C function)
 
@@ -214,9 +213,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var focusObserver: AXObserver?
     private var focusObserverPID: pid_t = 0
     private var lastFocusedElement: AXUIElement?
-    private var updaterController: SPUStandardUpdaterController?
-    private var sparkleUpdateDelegate: SparkleUpdateDelegate?
-    
+
     /// Store the input source ID BEFORE a Window Title Rule switched it
     /// Used to restore when leaving the rule-controlled context
     private var preRuleInputSourceId: String? = nil
@@ -251,11 +248,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// Log message to debug window (for external access)
     func logToDebugWindow(_ message: String) {
         debugWindowController?.logEvent(message)
-    }
-
-    /// Get the Sparkle updater for external access
-    func getSparkleUpdater() -> SPUUpdater? {
-        return updaterController?.updater
     }
 
     // MARK: - Application Lifecycle
@@ -330,11 +322,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Setup debug hotkey
         setupDebugHotkey()
 
-        // Setup Sparkle auto-update
-        setupSparkleUpdater()
-
         // Check and update XKeyIM if needed (on app startup)
         checkXKeyIMUpdate()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+            self?.performBackgroundVersionCheck()
+        }
 
         // Load Vietnamese dictionary if spell checking is enabled
         setupSpellCheckDictionary()
@@ -1694,81 +1687,249 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    // MARK: - Sparkle Auto-Update
+    // MARK: - Version Check (revision vs upstream xmannv/xkey)
+
+    private static let versionCheckURL = URL(string: "https://raw.githubusercontent.com/xmannv/xkey/main/Version.xcconfig")!
+    private static let upstreamRefsURL = URL(string: "https://api.github.com/repos/xmannv/xkey/git/refs/heads/main")!
+
+    private static func upstreamCompareURL(localSha: String, remoteSha: String) -> URL {
+        URL(string: "https://api.github.com/repos/xmannv/xkey/compare/\(localSha)...\(remoteSha)")!
+    }
 
     private func checkForUpdates() {
         debugWindowController?.logEvent("Manually checking for updates...")
-        // Activate app to bring update dialog to front
         NSApp.activate(ignoringOtherApps: true)
-        updaterController?.updater.checkForUpdates()
+        performManualVersionCheck()
     }
-    
-    /// Check for updates from SwiftUI views (activates app to bring dialog to front)
+
+    /// Check for updates from SwiftUI views
     func checkForUpdatesFromUI() {
         debugWindowController?.logEvent("[UI] Manually checking for updates...")
-        
-        // Must be called on main thread
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            
-            // Activate app to bring update dialog to front
             NSApp.activate(ignoringOtherApps: true)
-            
-            // Use the same method as menu bar - updater.checkForUpdates()
-            if let updater = self.updaterController?.updater {
-                self.debugWindowController?.logEvent("[UI] Calling updater.checkForUpdates()")
-                updater.checkForUpdates()
-            } else {
-                self.debugWindowController?.logEvent("[UI] updaterController or updater is nil!")
-            }
+            self.performManualVersionCheck()
         }
     }
 
-
-    private func setupSparkleUpdater() {
-        // Create the update delegate first
-        sparkleUpdateDelegate = SparkleUpdateDelegate()
-        
-        // Connect debug logging to the delegate
-        sparkleUpdateDelegate?.debugLogCallback = { [weak self] message in
-            self?.debugWindowController?.logEvent(message)
-        }
-        
-        do {
-            // Initialize Sparkle updater controller with our delegate
-            // This will automatically check for updates based on Info.plist settings:
-            // - SUFeedURL: appcast feed URL
-            // - SUPublicEDKey: public key for signature verification
-            // - SUEnableAutomaticChecks: enable automatic update checks
-            // - SUScheduledCheckInterval: check interval in seconds (86400 = 24 hours)
-            updaterController = SPUStandardUpdaterController(
-                startingUpdater: true,
-                updaterDelegate: sparkleUpdateDelegate,
-                userDriverDelegate: sparkleUpdateDelegate  // Also use as user driver delegate to bring update dialog to front
-            )
-            
-            debugWindowController?.logEvent("Sparkle auto-update initialized")
-            debugWindowController?.logEvent("   Feed URL: \(Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") as? String ?? "Not configured")")
-            debugWindowController?.logEvent("   Auto-check: \(Bundle.main.object(forInfoDictionaryKey: "SUEnableAutomaticChecks") as? Bool ?? false)")
-            debugWindowController?.logEvent("   Update delegate: SparkleUpdateDelegate (settings will be saved before restart)")
-            
-            // Check for updates immediately on app launch (silently in background)
-            // This ensures updates are always checked at startup, not just on schedule
-            // The dialog will only appear if a new update is found
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
-                guard let updater = self?.updaterController?.updater else { return }
-                
-                // Use background check - won't show UI if no update available
-                if updater.canCheckForUpdates {
-                    self?.debugWindowController?.logEvent("Checking for updates in background (startup check)...")
-                    updater.checkForUpdatesInBackground()
-                } else {
-                    self?.debugWindowController?.logEvent("Skipping startup update check (already checking or in progress)")
+    private func performManualVersionCheck() {
+        if let localRev = AppVersion.gitRevision, !localRev.isEmpty {
+            fetchUpstreamHeadAndCompare(showAlertAlways: true) { [weak self] result in
+                guard let self = self else { return }
+                switch result {
+                case .newer(let remoteRevision, let changelog):
+                    DispatchQueue.main.async {
+                        self.showVersionCheckAlert(hasNewer: true, remoteRevision: remoteRevision, changelog: changelog)
+                    }
+                case .upToDate:
+                    DispatchQueue.main.async {
+                        self.showVersionCheckAlert(hasNewer: false, remoteRevision: nil, changelog: nil)
+                    }
+                case .error:
+                    self.performFallbackVersionCheck(showAlertAlways: true)
                 }
             }
-            
-        } catch {
-            debugWindowController?.logEvent("Failed to initialize Sparkle: \(error)")
+            return
+        }
+        performFallbackVersionCheck(showAlertAlways: true)
+    }
+
+    private func performBackgroundVersionCheck() {
+        let key = "XKeyLastVersionCheckDate"
+        if let last = UserDefaults.standard.object(forKey: key) as? Date, Date().timeIntervalSince(last) < 86400 {
+            debugWindowController?.logEvent("Skipping background version check (last check < 24h)")
+            return
+        }
+        UserDefaults.standard.set(Date(), forKey: key)
+        if let localRev = AppVersion.gitRevision, !localRev.isEmpty {
+            fetchUpstreamHeadAndCompare(showAlertAlways: false) { [weak self] result in
+                guard let self = self else { return }
+                switch result {
+                case .newer(let remoteRevision, let changelog):
+                    DispatchQueue.main.async {
+                        NSApp.activate(ignoringOtherApps: true)
+                        self.showVersionCheckAlert(hasNewer: true, remoteRevision: remoteRevision, changelog: changelog)
+                    }
+                case .upToDate, .error:
+                    break
+                }
+            }
+            return
+        }
+        debugWindowController?.logEvent("Background version check: no git revision, skipping")
+    }
+
+    private enum VersionCheckResult {
+        case newer(remoteRevision: String, changelog: String?)
+        case upToDate
+        case error
+    }
+
+    private func fetchUpstreamHeadAndCompare(showAlertAlways: Bool, completion: @escaping (VersionCheckResult) -> Void) {
+        var request = URLRequest(url: Self.upstreamRefsURL)
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        let task = URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            guard let self = self else { return }
+            if let error = error {
+                self.debugWindowController?.logEvent("Version check (refs) failed: \(error.localizedDescription)")
+                completion(.error)
+                return
+            }
+            guard let data = data,
+                  let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let obj = json["object"] as? [String: Any],
+                  let remoteSha = obj["sha"] as? String, !remoteSha.isEmpty else {
+                self.debugWindowController?.logEvent("Version check: invalid refs response")
+                completion(.error)
+                return
+            }
+            guard let localRev = AppVersion.gitRevision, !localRev.isEmpty else {
+                completion(.error)
+                return
+            }
+            if localRev == remoteSha {
+                self.debugWindowController?.logEvent("Version check: up to date (revision \(localRev.prefix(7)))")
+                completion(.upToDate)
+                return
+            }
+            let compareURL = Self.upstreamCompareURL(localSha: localRev, remoteSha: remoteSha)
+            var compareRequest = URLRequest(url: compareURL)
+            compareRequest.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+            let compareTask = URLSession.shared.dataTask(with: compareRequest) { [weak self] compareData, compareResponse, compareError in
+                guard let self = self else { return }
+                if compareError != nil {
+                    self.debugWindowController?.logEvent("Version check (compare) failed, falling back to Version.xcconfig")
+                    completion(.error)
+                    return
+                }
+                guard let compareData = compareData,
+                      let compareHttp = compareResponse as? HTTPURLResponse else {
+                    completion(.error)
+                    return
+                }
+                if compareHttp.statusCode == 404 {
+                    self.debugWindowController?.logEvent("Version check: compare 404 (local SHA not in upstream), falling back")
+                    completion(.error)
+                    return
+                }
+                guard (200...299).contains(compareHttp.statusCode),
+                      let compareJson = try? JSONSerialization.jsonObject(with: compareData) as? [String: Any],
+                      let behindBy = compareJson["behind_by"] as? Int, behindBy > 0 else {
+                    if (200...299).contains(compareHttp.statusCode), let compareJson = try? JSONSerialization.jsonObject(with: compareData) as? [String: Any], (compareJson["behind_by"] as? Int) == 0 {
+                        completion(.upToDate)
+                    } else {
+                        completion(.error)
+                    }
+                    return
+                }
+                let changelog = Self.formatChangelog(from: compareData)
+                self.debugWindowController?.logEvent("Version check: \(behindBy) commit(s) behind upstream")
+                completion(.newer(remoteRevision: String(remoteSha.prefix(7)), changelog: changelog))
+            }
+            compareTask.resume()
+        }
+        task.resume()
+    }
+
+    private static func formatChangelog(from compareData: Data) -> String? {
+        guard let json = try? JSONSerialization.jsonObject(with: compareData) as? [String: Any],
+              let commits = json["commits"] as? [[String: Any]] else { return nil }
+        let maxLines = 20
+        let lines = commits.suffix(maxLines).reversed().compactMap { commit -> String? in
+            guard let inner = commit["commit"] as? [String: Any],
+                  let message = inner["message"] as? String else { return nil }
+            let firstLine = message.split(separator: "\n").first.map(String.init) ?? message
+            let trimmed = firstLine.trimmingCharacters(in: .whitespaces)
+            return trimmed.isEmpty ? nil : String(trimmed.prefix(80))
+        }
+        return lines.isEmpty ? nil : lines.joined(separator: "\n")
+    }
+
+    private func performFallbackVersionCheck(showAlertAlways: Bool) {
+        let task = URLSession.shared.dataTask(with: Self.versionCheckURL) { [weak self] data, response, error in
+            guard let self = self else { return }
+            if let error = error {
+                if showAlertAlways {
+                    DispatchQueue.main.async { self.showVersionCheckAlert(hasNewer: nil, remoteRevision: nil, remoteMarketing: nil, remoteBuild: nil, changelog: nil) }
+                }
+                self.debugWindowController?.logEvent("Version check (fallback) failed: \(error.localizedDescription)")
+                return
+            }
+            guard let data = data, let text = String(data: data, encoding: .utf8) else {
+                if showAlertAlways {
+                    DispatchQueue.main.async { self.showVersionCheckAlert(hasNewer: nil, remoteRevision: nil, remoteMarketing: nil, remoteBuild: nil, changelog: nil) }
+                }
+                return
+            }
+            guard let (remoteMarketing, remoteBuild) = Self.parseVersionXcconfig(text) else {
+                if showAlertAlways {
+                    DispatchQueue.main.async { self.showVersionCheckAlert(hasNewer: nil, remoteRevision: nil, remoteMarketing: nil, remoteBuild: nil, changelog: nil) }
+                }
+                return
+            }
+            let hasNewer = AppVersion.isNewer(remoteMarketing: remoteMarketing, remoteBuild: remoteBuild)
+            if showAlertAlways {
+                DispatchQueue.main.async {
+                    self.showVersionCheckAlert(hasNewer: hasNewer, remoteRevision: nil, remoteMarketing: remoteMarketing, remoteBuild: remoteBuild, changelog: nil)
+                }
+            }
+        }
+        task.resume()
+    }
+
+    private static func parseVersionXcconfig(_ content: String) -> (marketing: String, build: String)? {
+        var marketing: String?
+        var build: String?
+        for line in content.components(separatedBy: .newlines) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("MARKETING_VERSION") {
+                if let eq = trimmed.firstIndex(of: "=") {
+                    marketing = trimmed[trimmed.index(after: eq)...].trimmingCharacters(in: .whitespaces)
+                }
+            } else if trimmed.hasPrefix("CURRENT_PROJECT_VERSION") {
+                if let eq = trimmed.firstIndex(of: "=") {
+                    build = trimmed[trimmed.index(after: eq)...].trimmingCharacters(in: .whitespaces)
+                }
+            }
+        }
+        guard let m = marketing, !m.isEmpty, let b = build, !b.isEmpty else { return nil }
+        return (m, b)
+    }
+
+    private func showVersionCheckAlert(hasNewer: Bool? = nil, remoteRevision: String? = nil, remoteMarketing: String? = nil, remoteBuild: String? = nil, changelog: String? = nil) {
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        if let hasNewer = hasNewer, hasNewer {
+            if let rev = remoteRevision {
+                alert.messageText = "Phiên bản mới"
+                var body = "Đã có phiên bản mới \(rev)."
+                if let changelog = changelog, !changelog.isEmpty {
+                    body += "\n\n" + changelog
+                }
+                alert.informativeText = body
+                alert.addButton(withTitle: "Đóng")
+                alert.runModal()
+            } else if let m = remoteMarketing, let b = remoteBuild {
+                alert.messageText = "Phiên bản mới"
+                var body = "Đã có phiên bản mới \(m) (\(b))."
+                if let changelog = changelog, !changelog.isEmpty {
+                    body += "\n\n" + changelog
+                }
+                alert.informativeText = body
+                alert.addButton(withTitle: "Đóng")
+                alert.runModal()
+            }
+        } else if hasNewer == false {
+            alert.messageText = "Đã là phiên bản mới nhất"
+            alert.informativeText = "Bạn đang dùng phiên bản mới nhất."
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+        } else {
+            alert.messageText = "Không thể kiểm tra"
+            alert.informativeText = "Không thể kiểm tra cập nhật. Vui lòng thử lại sau."
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
         }
     }
 

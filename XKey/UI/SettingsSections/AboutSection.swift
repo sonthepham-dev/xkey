@@ -109,7 +109,6 @@ struct AboutSection: View {
                 Divider()
                     .padding(.horizontal, 80)
 
-                // Update Check Section - Using Sparkle
                 VStack(spacing: 10) {
                     HStack(spacing: 8) {
                         Image(systemName: "arrow.down.circle")
@@ -121,12 +120,6 @@ struct AboutSection: View {
                     }
 
                     Button("Kiểm tra cập nhật") {
-                        // Temporarily lower the Settings window level so Sparkle dialog appears on top
-                        if let settingsWindow = NSApp.keyWindow {
-                            settingsWindow.level = .normal
-                        }
-                        
-                        // Use AppDelegate.shared for reliable access
                         if let appDelegate = AppDelegate.shared {
                             appDelegate.checkForUpdatesFromUI()
                         } else if let delegate = NSApplication.shared.delegate as? AppDelegate {

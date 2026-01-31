@@ -760,9 +760,8 @@ class SharedSettings {
         // No-op: plist writes are immediate
     }
     
-    /// Force write all current settings to plist file
-    /// This is used before Sparkle restarts the app after an update
-    /// to ensure settings are saved to the current App Group container
+    /// Force write all current settings to plist file.
+    /// Useful before app restart to ensure settings are in the correct App Group location.
     /// In case of App Group path change between versions, this ensures
     /// settings are written to the correct location
     func forceWriteCurrentSettings() {
