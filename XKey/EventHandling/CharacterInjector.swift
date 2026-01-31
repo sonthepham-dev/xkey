@@ -152,7 +152,8 @@ class CharacterInjector {
                 // Forward Delete is only used for .autocomplete method
                 // For slow/fast methods, just send backspaces
                 
-                // SPECIAL CASE: Microsoft Office (Excel/Word/PowerPoint)
+                // SPECIAL CASE: Apps with AutoComplete suggestions
+                // (Microsoft Office, Google Sheets/Docs/Slides in browsers)
                 // Send Forward Delete before backspaces to clear AutoComplete suggestions
                 // Forward Delete clears any highlighted suggestion text after cursor
                 // Note: We use Forward Delete instead of Escape because:
@@ -162,16 +163,21 @@ class CharacterInjector {
                 // IMPORTANT: Only send Forward Delete when there's NO real text after cursor.
                 // If user clicked into middle of existing text, Forward Delete would delete
                 // real characters. AutoComplete suggestions are not counted as "real text" by AX API.
-                let isMicrosoftOffice = AppBehaviorDetector.shared.detect() == .microsoftOffice
-                if isMicrosoftOffice && backspaceCount > 0 {
+                //
+                // NOTE: For web apps (Google Sheets in Chrome), AX API often fails to get focused element.
+                // When AX fails, we default to TRUE (assume text exists) to AVOID Forward Delete.
+                // This is safer: missing an autocomplete clear is better than deleting real text.
+                let needsForwardDelete = AppBehaviorDetector.shared.needsForwardDeleteWithAXCheck
+                if needsForwardDelete && backspaceCount > 0 {
                     // Check if there's real text after cursor using Accessibility API
-                    let hasRealTextAfter = hasTextAfterCursor() ?? false
+                    // Default to true (skip Forward Delete) when AX fails - safer to not delete
+                    let hasRealTextAfter = hasTextAfterCursor() ?? true
                     if !hasRealTextAfter {
-                        debugCallback?("    → MS Office: sending Forward Delete to clear AutoComplete")
+                        debugCallback?("    → AutoComplete app: sending Forward Delete to clear suggestion")
                         sendForwardDelete(proxy: proxy)
                         usleep(2000)  // 2ms delay after Forward Delete
                     } else {
-                        debugCallback?("    → MS Office: skipping Forward Delete (real text after cursor)")
+                        debugCallback?("    → AutoComplete app: skipping Forward Delete (real text after cursor or AX failed)")
                     }
                 }
 
@@ -635,213 +641,6 @@ class CharacterInjector {
         usleep(settleTime)
     }
 
-    
-    /// Get text (word) before cursor until space
-    /// Used for spell checking when engine loses context (e.g., after backspace into previous word)
-    /// PERF: Uses timeout to prevent lag with complex Notes documents (5k+ chars, formatted text)
-    func getTextBeforeCursor() -> String? {
-        // Use semaphore with timeout to prevent blocking on slow AX queries
-        // Complex Notes documents can cause AX API to be very slow (100ms+)
-        let semaphore = DispatchSemaphore(value: 0)
-        var result: String?
-        
-        // Run AX query on background thread with timeout
-        DispatchQueue.global(qos: .userInteractive).async { [weak self] in
-            result = self?.getTextBeforeCursorSync()
-            semaphore.signal()
-        }
-        
-        // Wait with timeout - if query takes too long, skip it
-        let waitResult = semaphore.wait(timeout: .now() + axQueryTimeout)
-        
-        if waitResult == .timedOut {
-            debugCallback?("  [AX] Query timed out (>\(Int(axQueryTimeout * 1000))ms) - skipping to avoid lag")
-            return nil
-        }
-        
-        return result
-    }
-    
-    /// Synchronous version of getTextBeforeCursor (called from background thread)
-    private func getTextBeforeCursorSync() -> String? {
-        let systemWideElement = AXUIElementCreateSystemWide()
-        
-        var focusedElement: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(systemWideElement, kAXFocusedUIElementAttribute as CFString, &focusedElement) == .success else {
-            debugCallback?("  [AX] Failed to get focused element")
-            return nil
-        }
-        
-        let element = focusedElement as! AXUIElement
-        
-        // Get selected text range
-        var selectedRange: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &selectedRange) == .success else {
-            debugCallback?("  [AX] Failed to get selected range")
-            return nil
-        }
-        
-        // Extract cursor position
-        var rangeValue = CFRange(location: 0, length: 0)
-        guard AXValueGetValue(selectedRange as! AXValue, .cfRange, &rangeValue) else {
-            debugCallback?("  [AX] Failed to extract range value")
-            return nil
-        }
-        
-        let cursorPosition = rangeValue.location
-        debugCallback?("  [AX] Cursor position: \(cursorPosition)")
-        
-        // Read text from start to cursor (max 50 chars)
-        let readLength = min(cursorPosition, 50)
-        let readRange = CFRange(location: max(0, cursorPosition - readLength), length: readLength)
-        var readRangeValue = readRange
-        guard let axRange = AXValueCreate(.cfRange, &readRangeValue) else {
-            debugCallback?("  [AX] Failed to create AXValue")
-            return nil
-        }
-        
-        var text: CFTypeRef?
-        guard AXUIElementCopyParameterizedAttributeValue(
-            element,
-            kAXStringForRangeParameterizedAttribute as CFString,
-            axRange,
-            &text
-        ) == .success else {
-            debugCallback?("  [AX] Failed to read text")
-            return nil
-        }
-        
-        guard let fullText = text as? String else {
-            debugCallback?("  [AX] Text is not a string")
-            return nil
-        }
-        
-        // Extract last word (from last space/newline to end)
-        let components = fullText.components(separatedBy: CharacterSet.whitespacesAndNewlines)
-        let lastWord = components.last ?? ""
-        
-        debugCallback?("  [AX] Full text: '\(fullText)'")
-        debugCallback?("  [AX] Last word: '\(lastWord)' (length: \(lastWord.count))")
-        
-        return lastWord
-    }
-    /// Check if macro is a standalone word (not part of a larger word)
-    /// Simple logic: 
-    ///   - Character BEFORE macro text must be: space/newline/start of text
-    ///   - Character AFTER cursor must be: space/newline/end of text
-    /// Returns: true if standalone, false if part of word, nil if AX not supported or timed out
-    /// PERF: Uses timeout to prevent lag with complex Notes documents (5k+ chars, formatted text)
-    func isMacroStandalone(macroLength: Int) -> Bool? {
-        // Skip if macroLength is invalid
-        guard macroLength > 0 else { return nil }
-        
-        // Use semaphore with timeout to prevent blocking on slow AX queries
-        let semaphore = DispatchSemaphore(value: 0)
-        var result: Bool?
-        
-        // Run AX query on background thread with timeout
-        DispatchQueue.global(qos: .userInteractive).async { [weak self] in
-            result = self?.isMacroStandaloneSync(macroLength: macroLength)
-            semaphore.signal()
-        }
-        
-        // Wait with timeout - if query takes too long, return nil (skip macro check)
-        let waitResult = semaphore.wait(timeout: .now() + axQueryTimeout)
-        
-        if waitResult == .timedOut {
-            debugCallback?("  [AX] isMacroStandalone timed out (>\(Int(axQueryTimeout * 1000))ms) - skipping")
-            return nil  // Timeout = treat as unknown, allowing macro to proceed
-        }
-        
-        return result
-    }
-    
-    /// Synchronous version of isMacroStandalone (called from background thread)
-    private func isMacroStandaloneSync(macroLength: Int) -> Bool? {
-        let systemWideElement = AXUIElementCreateSystemWide()
-
-        var focusedElement: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(systemWideElement, kAXFocusedUIElementAttribute as CFString, &focusedElement) == .success else {
-            return nil  // AX not supported, silently return nil
-        }
-
-        let element = focusedElement as! AXUIElement
-
-        // Get selected text range (cursor position)
-        var selectedRange: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &selectedRange) == .success else {
-            return nil  // AX not supported
-        }
-
-        var rangeValue = CFRange(location: 0, length: 0)
-        guard AXValueGetValue(selectedRange as! AXValue, .cfRange, &rangeValue) else {
-            return nil  // AX not supported
-        }
-
-        let cursorPosition = rangeValue.location
-
-        // Get total text length
-        var numberOfCharacters: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, kAXNumberOfCharactersAttribute as CFString, &numberOfCharacters) == .success,
-              let totalLength = numberOfCharacters as? Int else {
-            return nil  // AX not supported
-        }
-
-        // Position right before macro text
-        let positionBeforeMacro = cursorPosition - macroLength
-        
-        // --- Check character BEFORE macro ---
-        var charBeforeOK = false
-        if positionBeforeMacro <= 0 {
-            // Macro is at start of text → OK
-            charBeforeOK = true
-        } else {
-            // Read character at position (positionBeforeMacro - 1)
-            let readPos = positionBeforeMacro - 1
-            let readRange = CFRange(location: readPos, length: 1)
-            var readRangeValue = readRange
-            if let axRange = AXValueCreate(.cfRange, &readRangeValue) {
-                var text: CFTypeRef?
-                if AXUIElementCopyParameterizedAttributeValue(element, kAXStringForRangeParameterizedAttribute as CFString, axRange, &text) == .success,
-                   let charString = text as? String, let char = charString.first {
-                    charBeforeOK = char.isWhitespace || char.isNewline
-                }
-            }
-        }
-
-        // --- Check character AFTER cursor ---
-        var charAfterOK = false
-        if cursorPosition >= totalLength {
-            // Cursor at end of text → OK
-            charAfterOK = true
-        } else {
-            // Read character at cursor position
-            let readRange = CFRange(location: cursorPosition, length: 1)
-            var readRangeValue = readRange
-            if let axRange = AXValueCreate(.cfRange, &readRangeValue) {
-                var text: CFTypeRef?
-                if AXUIElementCopyParameterizedAttributeValue(element, kAXStringForRangeParameterizedAttribute as CFString, axRange, &text) == .success,
-                   let charString = text as? String, let char = charString.first {
-                    charAfterOK = char.isWhitespace || char.isNewline
-                }
-            }
-        }
-
-        let isStandalone = charBeforeOK && charAfterOK
-        
-        // Only log result when it matters (not standalone = will skip macro)
-        if !isStandalone {
-            debugCallback?("  [AX] Macro not standalone: charBeforeOK=\(charBeforeOK), charAfterOK=\(charAfterOK)")
-        }
-        
-        return isStandalone
-    }
-    
-    /// Get length of text before cursor using Accessibility API
-    private func getTextLengthBeforeCursor() -> Int? {
-        return getTextBeforeCursor()?.count
-    }
-
     /// Check if there is text after cursor using Accessibility API
     /// Returns: true if there's text after cursor, false if at end of text, nil if AX not supported
     private func hasTextAfterCursor() -> Bool? {
@@ -969,6 +768,93 @@ class CharacterInjector {
         return char
     }
 
+    /// Get text before cursor using Accessibility API
+    /// Returns: String of text before cursor (up to specified length), nil if AX not supported
+    /// This is used for verifying buffer matches screen content before restore operations
+    func getTextBeforeCursor(length: Int = 50) -> String? {
+        let systemWideElement = AXUIElementCreateSystemWide()
+
+        var focusedElement: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(systemWideElement, kAXFocusedUIElementAttribute as CFString, &focusedElement) == .success else {
+            debugCallback?("  [AX] getTextBeforeCursor: Failed to get focused element")
+            return nil
+        }
+
+        let element = focusedElement as! AXUIElement
+
+        // Get selected text range (cursor position)
+        var selectedRange: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &selectedRange) == .success else {
+            debugCallback?("  [AX] getTextBeforeCursor: Failed to get selected range")
+            return nil
+        }
+
+        var rangeValue = CFRange(location: 0, length: 0)
+        guard AXValueGetValue(selectedRange as! AXValue, .cfRange, &rangeValue) else {
+            debugCallback?("  [AX] getTextBeforeCursor: Failed to extract range value")
+            return nil
+        }
+
+        let cursorPosition = rangeValue.location
+
+        // Ensure cursor position is valid
+        guard cursorPosition > 0 else {
+            debugCallback?("  [AX] getTextBeforeCursor: Cursor at position 0")
+            return ""  // Return empty string, not nil (AX works, just no text before cursor)
+        }
+
+        // Calculate how many characters to read (up to 'length' chars before cursor)
+        let readLength = min(length, cursorPosition)
+        let startPosition = cursorPosition - readLength
+        let readRange = CFRange(location: startPosition, length: readLength)
+        
+        var readRangeValue = readRange
+        guard let axRange = AXValueCreate(.cfRange, &readRangeValue) else {
+            debugCallback?("  [AX] getTextBeforeCursor: Failed to create AXValue")
+            return nil
+        }
+
+        var text: CFTypeRef?
+        guard AXUIElementCopyParameterizedAttributeValue(
+            element,
+            kAXStringForRangeParameterizedAttribute as CFString,
+            axRange,
+            &text
+        ) == .success else {
+            debugCallback?("  [AX] getTextBeforeCursor: Failed to read text")
+            return nil
+        }
+
+        guard let resultText = text as? String else {
+            debugCallback?("  [AX] getTextBeforeCursor: Text is not a string")
+            return nil
+        }
+
+        debugCallback?("  [AX] getTextBeforeCursor: Read '\(resultText)' (\(resultText.count) chars)")
+        return resultText
+    }
+
+    /// Get the last word before cursor using Accessibility API
+    /// Returns: The last word (text after last whitespace), nil if AX not supported or no text
+    /// This is used for verifying buffer matches screen content
+    func getLastWordBeforeCursor() -> String? {
+        // Query only 10 chars - Vietnamese words are typically 2-7 chars
+        // This minimizes AX overhead while still being sufficient for verification
+        guard let textBeforeCursor = getTextBeforeCursor(length: 10) else {
+            return nil  // AX not supported
+        }
+        
+        guard !textBeforeCursor.isEmpty else {
+            return ""  // No text before cursor
+        }
+        
+        // Find the last word (after last whitespace)
+        let components = textBeforeCursor.components(separatedBy: .whitespacesAndNewlines)
+        let lastWord = components.last ?? ""
+        
+        debugCallback?("  [AX] getLastWordBeforeCursor: '\(lastWord)'")
+        return lastWord
+    }
 
 
     /// Determine if Forward Delete should be sent for autocomplete method (Firefox/Safari address bar)

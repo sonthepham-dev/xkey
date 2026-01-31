@@ -214,6 +214,13 @@ final class TypingBuffer {
     /// Characters that overflowed the buffer (for very long words)
     private var overflow: [CharacterEntry] = []
 
+    /// Keystroke sequence in actual typing order (for restore at word break)
+    /// This tracks the EXACT order user typed keys, separate from per-entry modifiers
+    /// Example: "thưef" → sequence = [t, h, u, w, e, f] in this exact order
+    /// Note: getAllRawKeystrokes() returns [t, h, u, w, f, e] because f modifies ư (entry[2])
+    /// For word break restore, we need keystrokeSequence to restore correct order
+    private var keystrokeSequence: [RawKeystroke] = []
+
     // MARK: - Properties
 
     /// Number of characters in the buffer (displayed characters)
@@ -280,11 +287,19 @@ final class TypingBuffer {
     // MARK: - Remove Operations
 
     /// Remove and return the last character
+    /// Also removes the corresponding keystrokes from keystrokeSequence
     @discardableResult
     func removeLast() -> CharacterEntry? {
         guard !entries.isEmpty else { return nil }
 
         let removed = entries.removeLast()
+        
+        // Remove corresponding keystrokes from sequence
+        // The entry had (1 primary + N modifiers) keystrokes
+        let keystrokesToRemove = removed.keystrokeCount
+        for _ in 0..<keystrokesToRemove {
+            keystrokeSequence.popLast()
+        }
 
         // If we have overflow, bring one back
         if !overflow.isEmpty {
@@ -295,11 +310,23 @@ final class TypingBuffer {
     }
 
     /// Remove character at specific index
+    /// Note: This is more complex - we need to find and remove the right keystrokes
+    /// For now, we only remove from sequence if removing the LAST entry
+    /// Other cases are rare and the sequence may become inconsistent
     @discardableResult
     func remove(at index: Int) -> CharacterEntry? {
         guard index >= 0 && index < entries.count else { return nil }
 
         let removed = entries.remove(at: index)
+        
+        // If removing the last entry, also remove from sequence
+        // For middle entries, sequence becomes inconsistent but this is rare
+        if index == entries.count {
+            let keystrokesToRemove = removed.keystrokeCount
+            for _ in 0..<keystrokesToRemove {
+                keystrokeSequence.popLast()
+            }
+        }
 
         // If we have overflow, bring one back
         if !overflow.isEmpty {
@@ -309,40 +336,90 @@ final class TypingBuffer {
         return removed
     }
 
+
     /// Clear the entire buffer
     func clear() {
         entries.removeAll()
         overflow.removeAll()
+        keystrokeSequence.removeAll()
+    }
+
+    // MARK: - Keystroke Sequence Tracking
+    
+    /// Record a keystroke in the actual typing order
+    /// Call this for EVERY keystroke (primary keys and modifiers)
+    /// This maintains the exact order user typed for restore at word break
+    func recordKeystroke(_ keystroke: RawKeystroke) {
+        keystrokeSequence.append(keystroke)
+    }
+    
+    /// Get keystroke sequence in actual typing order (for restore at word break)
+    /// This returns keystrokes in the EXACT order user typed them
+    /// Unlike getAllRawKeystrokes() which groups modifiers with their entries
+    func getKeystrokeSequence() -> [RawKeystroke] {
+        return keystrokeSequence
+    }
+    
+    /// Get keystroke sequence as UInt32 array (for compatibility)
+    func getKeystrokeSequenceAsUInt32() -> [UInt32] {
+        keystrokeSequence.map { $0.asUInt32 }
+    }
+    
+    /// Remove last keystroke from sequence (for backspace handling)
+    @discardableResult
+    func removeLastFromSequence() -> RawKeystroke? {
+        keystrokeSequence.popLast()
+    }
+    
+    /// Get count of keystrokes in sequence
+    var keystrokeSequenceCount: Int {
+        keystrokeSequence.count
     }
 
     // MARK: - Modifier Operations
 
     /// Add a modifier keystroke to the last entry
     /// Used for Telex double keys (aa→â) and tone marks
+    /// NOTE: This does NOT record to keystrokeSequence - caller must call recordKeystroke separately
     func addModifierToLast(_ keystroke: RawKeystroke) {
         guard !entries.isEmpty else { return }
         entries[entries.count - 1].addModifier(keystroke)
     }
 
     /// Add a modifier keystroke to entry at specific index
+    /// NOTE: This does NOT record to keystrokeSequence - caller must call recordKeystroke separately
     func addModifier(at index: Int, keystroke: RawKeystroke) {
         guard index >= 0 && index < entries.count else { return }
         entries[index].addModifier(keystroke)
     }
 
     /// Remove the last modifier from the last entry
+    /// Also removes the last keystroke from keystrokeSequence (assuming it was the modifier)
     @discardableResult
     func removeLastModifierFromLast() -> RawKeystroke? {
         guard !entries.isEmpty else { return nil }
-        return entries[entries.count - 1].removeLastModifier()
+        let removed = entries[entries.count - 1].removeLastModifier()
+        if removed != nil {
+            keystrokeSequence.popLast()
+        }
+        return removed
     }
     
     /// Remove the last modifier from entry at specific index
+    /// Also removes from keystrokeSequence if the modifier was recently added
+    /// Note: This may not perfectly track sequence if modifier was added long ago
     @discardableResult
     func removeLastModifier(at index: Int) -> RawKeystroke? {
         guard index >= 0 && index < entries.count else { return nil }
-        return entries[index].removeLastModifier()
+        let removed = entries[index].removeLastModifier()
+        if removed != nil {
+            // Remove from sequence - this assumes the modifier is still near the end
+            // This is a best-effort approach; in complex undo scenarios, sequence may be imperfect
+            keystrokeSequence.popLast()
+        }
+        return removed
     }
+
 
     // MARK: - Query Operations
 
@@ -489,15 +566,23 @@ final class TypingBuffer {
     func createSnapshot() -> BufferSnapshot {
         BufferSnapshot(
             entries: entries,
-            overflow: overflow
+            overflow: overflow,
+            keystrokeSequence: keystrokeSequence
         )
     }
 
     /// Restore from a snapshot
+    /// Note: keystrokeSequence is rebuilt from entries (per-entry order) instead of
+    /// restoring from snapshot. This ensures consistency after restore + edit operations.
+    /// The original typing order is lost, but per-entry order produces correct restore output.
     func restore(from snapshot: BufferSnapshot) {
         entries = snapshot.entries
         overflow = snapshot.overflow
+        // Rebuild keystrokeSequence from entries to ensure consistency
+        // This allows proper handling of delete operations after restore
+        keystrokeSequence = getAllRawKeystrokes()
     }
+
 
     /// Restore from legacy typingWord data
     /// Note: This loses raw keystroke information
@@ -553,6 +638,8 @@ final class TypingBuffer {
 struct BufferSnapshot: Equatable {
     let entries: [CharacterEntry]
     let overflow: [CharacterEntry]
+    /// Keystroke sequence preserving actual typing order (for restore)
+    let keystrokeSequence: [RawKeystroke]
 
     /// Number of displayed characters
     var count: Int { entries.count }
@@ -579,8 +666,9 @@ struct BufferSnapshot: Equatable {
     }
 
     /// Empty snapshot
-    static let empty = BufferSnapshot(entries: [], overflow: [])
+    static let empty = BufferSnapshot(entries: [], overflow: [], keystrokeSequence: [])
 }
+
 
 // MARK: - Typing History
 
@@ -632,7 +720,7 @@ final class TypingHistory {
         for _ in 0..<count {
             entries.append(CharacterEntry(keyCode: keyCode, isCaps: false))
         }
-        snapshots.append(BufferSnapshot(entries: entries, overflow: []))
+        snapshots.append(BufferSnapshot(entries: entries, overflow: [], keystrokeSequence: []))
         
         // Auto-trim if exceeds limit
         trimIfNeeded()
